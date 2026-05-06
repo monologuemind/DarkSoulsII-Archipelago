@@ -1303,6 +1303,25 @@ int apply_special_effect(uint32_t effect_id) {
         return 0;
     }
 
+    // Diagnostic scan: run this once when in-game
+    uintptr_t gm_base = (uintptr_t)ds2_game_manager_imp;
+
+    for (int offset = 0x80; offset <= 0x150; offset += 8) {
+        uintptr_t potential_ptr = *(uintptr_t*)(gm_base + offset);
+        
+        // Check if this looks like a valid 64-bit heap pointer
+        if (potential_ptr > 0x0000010000000000 && potential_ptr < 0x00007FFFFFFFFFFF) {
+            DEBUG_PRINT("POINTER DETECTED at offset 0x%X: %p", offset, (void*)potential_ptr);
+            
+            // Let's test if this is the player manager by chasing the local_player (+0x08)
+            uintptr_t local_p = *(uintptr_t*)(potential_ptr + 0x08);
+            if (local_p > 0x0000010000000000 && local_p < 0x00007FFFFFFFFFFF) {
+                DEBUG_PRINT("  -> SUCCESS: This is likely the PlayerManager! LocalPlayer: %p", (void*)local_p);
+            }
+        }
+    }
+
+    /*
     DEBUG_PRINT("bout to check dat player_manager");
     uintptr_t player_ptr = (uintptr_t)ds2_game_manager_imp->player_manager->local_player;
     if (!player_ptr) {
@@ -1327,7 +1346,7 @@ int apply_special_effect(uint32_t effect_id) {
     else {
         DEBUG_PRINT("pSpEffectCtrl && original_apply_special_effect");
     }
-
+*/
     return 1;
 }
 
