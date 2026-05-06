@@ -21,6 +21,14 @@
    ========================================================= */
 
 typedef struct {
+    uint32_t speffect_id;
+    uint32_t active;
+    uint32_t Unk00;
+    uint32_t type_constant;
+    uint32_t Unk01;
+} DS2SpEffectParam;
+
+typedef struct {
     uint8_t lots_dropped_order;
     uint8_t lots_dropped_num;
     uint8_t Unk02;
@@ -408,6 +416,11 @@ typedef struct {
    ========================================================= */
 
 typedef struct {
+    uint8_t unk00[DS2_OFFSET(0x08, 0x08)];
+    void* local_player;
+} DS2PlayerManager;
+
+typedef struct {
     uint8_t unk01;
 } DS2EventFlagManager;
 
@@ -435,7 +448,10 @@ typedef struct {
     uint8_t unk02[DS2_OFFSET(0x30, 0x18)];
     DS2GameDataManager* game_data_manager;    // 0xA8 / 0x60
 
-    uint8_t unk04[DS2_OFFSET(0x2230, 0xC60)];
+    uint8_t unk_player[DS2_OFFSET(0x20, 0x0)];
+    DS2PlayerManager* player_manager; // 0xD0 / 0x64
+
+    uint8_t unk04[DS2_OFFSET(0x2208, 0xC5C)];
     DS2DLBackAllocator* dl_back_allocator;    // 0x22E0 / 0xCC4
 
     uint8_t unk05[DS2_OFFSET(0x1C4, 0x124)];
@@ -449,6 +465,8 @@ DS2GameManagerImp* ds2_game_manager_imp = 0;
    ========================================================= */
 
 #define DS2_SINGLETON_GameManagerImp              DS2_OFFSET(0x16148f0, 0x1150414)
+
+#define DS2_FUNCTION_APPLY_SPECIAL_EFFECT         DS2_OFFSET(0x247A50, 0x27C9F0)
 
 #define DS2_FUNCTION_SET_MAP_ENTITY_PICKED_UP     DS2_OFFSET(0x1DE6C0, 0x257060)
 #define DS2_FUNCTION_GIVE_ITEMS_ON_REWARD         DS2_OFFSET(0x199CC0, 0x21D3C0)
@@ -548,6 +566,12 @@ uintptr_t DS2_PARAM_RING_PARAM = 0;
 /* =========================================================
    Function Typedefs
    ========================================================= */
+
+#if DS2_64
+typedef void(__fastcall* ds2_apply_special_effect_t)(void* pSpEffectCtrl, DS2SpEffectParam* status, float* duration);
+#elif DS2_32
+typedef void(__thiscall* ds2_apply_special_effect_t)(void* pSpEffectCtrl, DS2SpEffectParam* status, float* duration);
+#endif
 
 typedef void (__thiscall *ds2_set_map_entity_picked_up_t)(
     DS2MapItemPackEntityData* param_1,
@@ -666,6 +690,7 @@ int libds2_is_player_ingame();
 int libds2_set_event_flag(uint32_t flag_id, uint8_t state);
 int libds2_is_item_popup_open();
 int libds2_patch_param_table(uintptr_t table_ptr, param_patch_fn fn, void* context);
+int libds2_apply_special_effect(uint32_t effect_id);
 
 /* =========================================================
    Implementation

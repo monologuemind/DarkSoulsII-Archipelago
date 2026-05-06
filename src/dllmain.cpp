@@ -48,6 +48,7 @@
 } while(0)
 
 #define HOOK_LIST(X) \
+    X(apply_special_effect,        DS2_FUNCTION_APPLY_SPECIAL_EFFECT) \
     X(set_map_entity_picked_up,    DS2_FUNCTION_SET_MAP_ENTITY_PICKED_UP) \
     X(give_items_on_reward,        DS2_FUNCTION_GIVE_ITEMS_ON_REWARD) \
     X(give_items_on_shop_purchase, DS2_FUNCTION_GIVE_ITEMS_ON_SHOP_PURCHASE) \
@@ -401,6 +402,16 @@ void check_location(uint32_t id, APLocationType type)
         }
     }
 }
+
+#if DS2_64
+void detour_apply_special_effect(void* pSpEffectCtrl, DS2SpEffectParam* p2, float* duration)
+#elif DS2_32
+void __fastcall detour_apply_special_effect(void* pSpEffectCtrl, void* unused, DS2SpEffectParam* p2, float* duration)
+#endif
+{
+    original_apply_special_effect(pSpEffectCtrl, p2, duration);
+}
+
 
 #if DS2_64
 void detour_set_map_entity_picked_up(DS2MapItemPackEntityData* p1, DS2MapItemPackEntityData* p2)
@@ -1278,6 +1289,40 @@ int check_memory(void* address, void* pattern, size_t size)
     return 1;
 }
 
+int apply_special_effect(uint32_t effect_id) {
+    // TODO: queue the effect
+    if (libds2_get_player_state() != DS2_GAMESTATE_INGAME)
+    {
+        DEBUG_PRINT("libds2_get_player_state() != DS2_GAMESTATE_INGAME");
+        DEBUG_PRINT("%d", libds2_get_player_state());
+        return 0;
+    }
+    if (!ds2_game_manager_imp || !ds2_game_manager_imp->player_manager || !ds2_game_manager_imp->player_manager->local_player) {
+        DEBUG_PRINT("!ds2_game_manager_imp: %d, !ds2_game_manager_imp->player_manager: %d, !ds2_game_manager_imp->player_manager->local_player: %d", !ds2_game_manager_imp, !ds2_game_manager_imp->player_manager, !ds2_game_manager_imp->player_manager->local_player);
+        return 0;
+    }
+
+    uintptr_t player_ptr = (uintptr_t)ds2_game_manager_imp->player_manager->local_player;
+    DEBUG_PRINT("local_player: %d", local_player);
+    
+    /*void* pSpEffectCtrl = *(void**)((uintptr_t)player_ptr + DS2_OFFSET(0x3D0, 0x2D4));
+    if (pSpEffectCtrl && original_apply_special_effect) {
+        DS2SpEffectParam param = {};
+        param.speffect_id = effect_id;
+        param.active = 1;
+        param.type_constant = 0x219;
+
+        float duration = -1.0f;
+
+        original_apply_special_effect(pSpEffectCtrl, &param, &duration);
+    }
+    else {
+        DEBUG_PRINT("pSpEffectCtrl && original_apply_special_effect");
+    }*/
+
+    return 1;
+}
+
 int init_hooks()
 {
     uintptr_t base_address = (uintptr_t)GetModuleHandle(0);
@@ -1403,12 +1448,31 @@ void render_overlay()
 
             ImGui::Spacing();
 
-            if (ImGui::Button("Connect", ImVec2(-1, 0))) {
+            if (ImGui::Button("Connect", ImVec2(20, 0))) {
                 // NOTE perhaps race condition
                 state.ap = setup_apclient();
                 state.slot_refused = 0;
                 connecting = true;
             }
+            if (ImGui::Button("poison")) {
+                apply_special_effect(1000); // poison
+            }
+            if (ImGui::Button("toxic")) {
+                apply_special_effect(1010); // toxic
+            }
+            if (ImGui::Button("curse")) {
+                apply_special_effect(1020); // curse
+            }
+            if (ImGui::Button("petrification")) {
+                apply_special_effect(1030); // petrification
+            }
+            if (ImGui::Button("corrosive")) {
+                apply_special_effect(1050); // corrosive
+            }
+            if (ImGui::Button("fat-roll")) {
+                apply_special_effect(2010); // fat roll?
+            }
+
             ImGui::EndDisabled();
 
             ImGui::EndTabItem();
