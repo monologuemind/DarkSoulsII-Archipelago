@@ -1303,9 +1303,15 @@ int apply_special_effect(uint32_t effect_id) {
     }
 
     uintptr_t player_ptr = (uintptr_t)ds2_game_manager_imp->player_manager->local_player;
-    DEBUG_PRINT("local_player: %d", local_player);
+    if (!player_ptr) {
+        DEBUG_PRINT("!player_ptr: %d", !player_ptr);
+        return 0;
+    }
+
+    DEBUG_PRINT("player_ptr: %p", (void *)player_ptr);
     
-    /*void* pSpEffectCtrl = *(void**)((uintptr_t)player_ptr + DS2_OFFSET(0x3D0, 0x2D4));
+    void* pSpEffectCtrl = *(void**)((uintptr_t)player_ptr + DS2_OFFSET(0x3D0, 0x2D4));
+    DEBUG_PRINT("pSpEffectCtrl: %p", pSpEffectCtrl);
     if (pSpEffectCtrl && original_apply_special_effect) {
         DS2SpEffectParam param = {};
         param.speffect_id = effect_id;
@@ -1318,7 +1324,7 @@ int apply_special_effect(uint32_t effect_id) {
     }
     else {
         DEBUG_PRINT("pSpEffectCtrl && original_apply_special_effect");
-    }*/
+    }
 
     return 1;
 }
