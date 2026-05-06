@@ -1290,6 +1290,7 @@ int check_memory(void* address, void* pattern, size_t size)
 }
 
 int apply_special_effect(uint32_t effect_id) {
+    DEBUG_PRINT("apply_special_effect: %d", effect_id);
     // TODO: queue the effect
     if (libds2_get_player_state() != DS2_GAMESTATE_INGAME)
     {
@@ -1302,6 +1303,7 @@ int apply_special_effect(uint32_t effect_id) {
         return 0;
     }
 
+    DEBUG_PRINT("bout to check dat player_manager");
     uintptr_t player_ptr = (uintptr_t)ds2_game_manager_imp->player_manager->local_player;
     if (!player_ptr) {
         DEBUG_PRINT("!player_ptr: %d", !player_ptr);
@@ -1547,17 +1549,20 @@ void render_overlay()
 
 int init()
 {
-#ifdef MOD_DEBUG
-    AllocConsole();
-    freopen_s((FILE**)stdout, "CONOUT$", "w", stdout);
-#else
-    FILE* log_file = freopen("archipelago.log", "a", stdout);
+//#ifdef MOD_DEBUG
+//    AllocConsole();
+//    freopen_s((FILE**)stdout, "CONOUT$", "w", stdout);
+//#else
+    FILE* log_file = freopen("archipelago-debug.log", "a", stdout);
     if (!log_file) {
         DWORD err = GetLastError();
         printf("Error opening log file. Error code: %lu\n", err);
         return 0;
     }
-#endif
+    else {
+        setvbuf(stdout, NULL, _IONBF, 0);
+    }
+//#endif
 
     if (!CreateDirectoryA("archipelago", 0)) {
         DWORD err = GetLastError();
