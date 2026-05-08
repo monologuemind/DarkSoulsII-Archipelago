@@ -404,12 +404,21 @@ void check_location(uint32_t id, APLocationType type)
 }
 
 #if DS2_64
-void detour_apply_special_effect(void* pSpEffectCtrl, DS2SpEffectParam* p2, float* duration)
+void detour_apply_special_effect(void* character_ptr, DS2SpEffectRequest* effect_req)
 #elif DS2_32
-void __fastcall detour_apply_special_effect(void* pSpEffectCtrl, void* unused, DS2SpEffectParam* p2, float* duration)
+void __fastcall detour_apply_special_effect(void* character_ptr, DS2SpEffectRequest* effect_req)
 #endif
 {
-    original_apply_special_effect(pSpEffectCtrl, p2, duration);
+    if (player_ptr == NULL && character_ptr != NULL) {
+        player_ptr = character_ptr;
+    }
+    if (effect_req != NULL) {
+        uintptr_t base_address = (uintptr_t)GetModuleHandle(0);
+        DEBUG_PRINT("CHAR-PTR! PlayerPtr: %p (BaseAddress: %p + 0x%llX)", character_ptr, (void*)base_address, (unsigned long long)((uintptr_t)character_ptr) - base_address);
+        DEBUG_PRINT("[DS2_LOG] Effect To Apply! ID: %u, Qty: %u, Dur: %.2f, FA: %u, FB: %u, PAD: %u", effect_req->speffect_id, effect_req->quantity, effect_req->duration, effect_req->flag_a, effect_req->flag_b, effect_req->pad);
+    }
+
+    original_apply_special_effect(character_ptr, effect_req);
 }
 
 
@@ -1292,61 +1301,79 @@ int check_memory(void* address, void* pattern, size_t size)
 int apply_special_effect(uint32_t effect_id) {
     DEBUG_PRINT("apply_special_effect: %d", effect_id);
     // TODO: queue the effect
-    if (libds2_get_player_state() != DS2_GAMESTATE_INGAME)
+    if (libds2_get_player_state() != DS2_GAMESTATE_INGAME && player_ptr != NULL)
     {
         DEBUG_PRINT("libds2_get_player_state() != DS2_GAMESTATE_INGAME");
         DEBUG_PRINT("%d", libds2_get_player_state());
         return 0;
     }
-    if (!ds2_game_manager_imp || !ds2_game_manager_imp->player_manager || !ds2_game_manager_imp->player_manager->local_player) {
-        DEBUG_PRINT("!ds2_game_manager_imp: %d, !ds2_game_manager_imp->player_manager: %d, !ds2_game_manager_imp->player_manager->local_player: %d", !ds2_game_manager_imp, !ds2_game_manager_imp->player_manager, !ds2_game_manager_imp->player_manager->local_player);
-        return 0;
-    }
 
-    // Diagnostic scan: run this once when in-game
-    uintptr_t gm_base = (uintptr_t)ds2_game_manager_imp;
+    if (original_apply_special_effect) {
+        DS2SpEffectRequest request = {0};
+        request.speffect_id = effect_id;
+        request.quantity = 1;
+        request.duration = -1;
+        request.pad = 0; // monologuemind: idk what this does
 
-    for (int offset = 0x80; offset <= 0x150; offset += 8) {
-        uintptr_t potential_ptr = *(uintptr_t*)(gm_base + offset);
-        
-        // Check if this looks like a valid 64-bit heap pointer
-        if (potential_ptr > 0x0000010000000000 && potential_ptr < 0x00007FFFFFFFFFFF) {
-            DEBUG_PRINT("POINTER DETECTED at offset 0x%X: %p", offset, (void*)potential_ptr);
-            
-            // Let's test if this is the player manager by chasing the local_player (+0x08)
-            uintptr_t local_p = *(uintptr_t*)(potential_ptr + 0x08);
-            if (local_p > 0x0000010000000000 && local_p < 0x00007FFFFFFFFFFF) {
-                DEBUG_PRINT("  -> SUCCESS: This is likely the PlayerManager! LocalPlayer: %p", (void*)local_p);
-            }
+        request.flag_a = -1;
+        request.flag_b = -1;
+
+        switch (effect_id) {
+        case 900100: // poison
+            request.flag_a = 26;
+            request.flag_b = 4;
+            break;
+        case 900200: // bleeding damage
+            request.flag_a = 25;
+            request.flag_b = 4;
+            break;
+        case 900210: // bleeding effect
+            request.flag_a = 25;
+            request.flag_b = 2;
+            break;
+        case 900400: // curse
+            request.flag_a = 25;
+            request.flag_b = 4;
+            break;
+        case 900600: // toxic
+            request.flag_a = 27;
+            request.flag_b = 4;
+            break;
+        case 901100: // petrification death aura
+            request.flag_a = 25;
+            request.flag_b = 4;
+            break;
+        case 901110: // curse death aura
+            request.flag_a = 25;
+            request.flag_b = 1;
+            break;
+        case 120000310: // corrosive
+            request.flag_a = 25;
+            request.flag_b = 2;
+            break;
+        case 60470000: // hello
+            request.flag_a = 25;
+            request.flag_b = 2;
+            break;
+        case 60480000: // thank you
+            request.flag_a = 25;
+            request.flag_b = 2;
+            break;
+        case 60490000: // sorry
+            request.flag_a = 25;
+            request.flag_b = 2;
+            break;
+        case 60500000: // very good
+            request.flag_a = 25;
+            request.flag_b = 2;
+            break;
+        }
+
+        if (request.flag_a != -1 && request.flag_b != -1) {
+            detour_apply_special_effect(player_ptr, &request);
         }
     }
 
-    /*
-    DEBUG_PRINT("bout to check dat player_manager");
-    uintptr_t player_ptr = (uintptr_t)ds2_game_manager_imp->player_manager->local_player;
-    if (!player_ptr) {
-        DEBUG_PRINT("!player_ptr: %d", !player_ptr);
-        return 0;
-    }
-
-    DEBUG_PRINT("player_ptr: %p", (void *)player_ptr);
-    
-    void* pSpEffectCtrl = *(void**)((uintptr_t)player_ptr + DS2_OFFSET(0x3D0, 0x2D4));
-    DEBUG_PRINT("pSpEffectCtrl: %p", pSpEffectCtrl);
-    if (pSpEffectCtrl && original_apply_special_effect) {
-        DS2SpEffectParam param = {};
-        param.speffect_id = effect_id;
-        param.active = 1;
-        param.type_constant = 0x219;
-
-        float duration = -1.0f;
-
-        original_apply_special_effect(pSpEffectCtrl, &param, &duration);
-    }
-    else {
-        DEBUG_PRINT("pSpEffectCtrl && original_apply_special_effect");
-    }
-*/
     return 1;
 }
 
@@ -1475,30 +1502,48 @@ void render_overlay()
 
             ImGui::Spacing();
 
-            if (ImGui::Button("Connect", ImVec2(20, 0))) {
+            if (ImGui::Button("Connect")) {
                 // NOTE perhaps race condition
                 state.ap = setup_apclient();
                 state.slot_refused = 0;
                 connecting = true;
             }
+            
             if (ImGui::Button("poison")) {
-                apply_special_effect(1000); // poison
+                apply_special_effect(900100); // poison
+            }
+            if (ImGui::Button("bleeding-damage")) {
+                apply_special_effect(900200); // bleeding-damage
+            }
+            if (ImGui::Button("bleeding-effect")) {
+                apply_special_effect(900210); // bleeding-effect
             }
             if (ImGui::Button("toxic")) {
-                apply_special_effect(1010); // toxic
+                apply_special_effect(900600); // toxic
             }
             if (ImGui::Button("curse")) {
-                apply_special_effect(1020); // curse
+                apply_special_effect(900400); // curse
             }
             if (ImGui::Button("petrification")) {
-                apply_special_effect(1030); // petrification
+                apply_special_effect(901100); // petrification
+                apply_special_effect(901110);
             }
             if (ImGui::Button("corrosive")) {
-                apply_special_effect(1050); // corrosive
+                apply_special_effect(120000310); // corrosive
             }
-            if (ImGui::Button("fat-roll")) {
-                apply_special_effect(2010); // fat roll?
+            if (ImGui::Button("hello")) {
+                apply_special_effect(60470000); // hello
             }
+            if (ImGui::Button("thank")) {
+                apply_special_effect(60480000); // thank you
+            }
+            if (ImGui::Button("sorry")) {
+                apply_special_effect(60490000); // sorry
+            }
+            if (ImGui::Button("good")) {
+                apply_special_effect(60500000); // very good
+            }
+            
 
             ImGui::EndDisabled();
 
