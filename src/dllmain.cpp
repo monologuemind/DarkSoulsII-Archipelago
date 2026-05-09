@@ -199,6 +199,8 @@ typedef struct {
     int save_loaded;
 
     int goaled;
+    int death_link;
+    int died_by_death_link;
 
     Queue item_queue;
     Queue location_queue;
