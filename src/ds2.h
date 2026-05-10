@@ -486,6 +486,18 @@ void* player_ptr = NULL;
    Pointer Chains
    ========================================================= */
 
+static uintptr_t player_chain[] = {
+    DS2_SINGLETON_GameManagerImp,
+    DS2_OFFSET(0xD0, 0x74),
+    0x0
+};
+
+static uintptr_t hp_chain[] = {
+    DS2_SINGLETON_GameManagerImp,
+    DS2_OFFSET(0xD0, 0x74),
+    DS2_OFFSET(0x168, 0xFC),
+};
+
 static uintptr_t item_lot_param2_other_chain[] = {
     DS2_SINGLETON_GameManagerImp,
     DS2_OFFSET(0xA8, 0x60),
@@ -721,10 +733,13 @@ static uintptr_t resolve_pointer_chain_retry(uintptr_t base, uintptr_t* offsets,
     return 0;
 }
 
+uintptr_t base_address_g = 0;
+
 // TODO check for errors
 int libds2_init()
 {
     uintptr_t base_address = (uintptr_t)GetModuleHandle("DarkSoulsII.exe");
+    base_address_g = base_address;
     uintptr_t game_manager_imp_addr = base_address + DS2_SINGLETON_GameManagerImp;
 
     for (int attempts = 0; attempts < 10000; ++attempts) {
@@ -859,6 +874,78 @@ int libds2_patch_param_table(uintptr_t table_ptr, param_patch_fn fn, void* conte
     }
 
     return 1;
+}
+
+int libds2_kill_player() {
+    uintptr_t DS2_HP = resolve_pointer_chain_retry(
+        base_address_g, hp_chain,
+        sizeof(hp_chain) / sizeof(hp_chain[0])
+    );
+    
+    if (!DS2_HP) return 0;
+
+    int32_t* hp = (int32_t*)DS2_HP;
+    if (*hp > 0) {
+        *hp = 0;
+        return 1;
+    }
+    return 0;
+}
+
+static int prev_hp = -1;
+static int curr_hp = -1;
+int libds2_player_just_died() {
+    uintptr_t DS2_HP = resolve_pointer_chain_retry(
+        base_address_g, hp_chain,
+        sizeof(hp_chain) / sizeof(hp_chain[0])
+    );
+
+    if (!DS2_HP) return 0;
+
+    prev_hp = curr_hp;
+    curr_hp = *(int32_t*)DS2_HP;
+
+    if (prev_hp != curr_hp && prev_hp > 0 && curr_hp <= 0) {
+        return 1;
+    }
+
+    return 0;
+}
+
+int libds2_is_player_sp_effect_ptr(void* ptr) {
+    printf("base_address_g: %p\n", (void*)base_address_g);
+    uintptr_t DS2_PLAYER = resolve_pointer_chain_retry(
+        base_address_g, player_chain,
+        sizeof(player_chain) / sizeof(player_chain[0])
+    );
+
+    if (!DS2_PLAYER) {
+        printf("NO DS2_PLAYER AVAILABLE WITH OUR OFFSET\n");
+        return 0;
+    }
+
+    void* chr_sp_effect_ctrl = *(void**)(DS2_PLAYER + DS2_OFFSET(0x3E0, 0x2D4));
+
+    printf("chr_sp_effect_ctrl: %p\n", chr_sp_effect_ctrl);
+
+    return chr_sp_effect_ctrl && ptr == chr_sp_effect_ctrl;
+}
+
+
+void* libds2_get_player_sp_effect_ptr() {
+    uintptr_t DS2_PLAYER = resolve_pointer_chain_retry(
+        base_address_g, player_chain,
+        sizeof(player_chain) / sizeof(player_chain[0])
+    );
+
+    if (!DS2_PLAYER) {
+        printf("NO DS2_PLAYER AVAILABLE WITH OUR OFFSET\n");
+        return 0;
+    }
+
+    void* chr_sp_effect_ctrl = *(void**)(DS2_PLAYER + DS2_OFFSET(0x3E0, 0x2D4));
+
+    return chr_sp_effect_ctrl;
 }
 
 #endif // LIBDS2_IMPLEMENTATION

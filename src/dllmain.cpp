@@ -200,10 +200,11 @@ typedef struct {
 
     int goaled;
     int death_link;
-    int died_by_death_link;
+    int died_by_deathlink;
 
     Queue item_queue;
     Queue location_queue;
+    Queue death_link_queue;
     CRITICAL_SECTION queue_lock;
 
     APLocationMapping location_mappings[MAX_LOCATIONS];
@@ -411,14 +412,9 @@ void detour_apply_special_effect(void* character_ptr, DS2SpEffectRequest* effect
 void __fastcall detour_apply_special_effect(void* character_ptr, DS2SpEffectRequest* effect_req)
 #endif
 {
-    if (player_ptr == NULL && character_ptr != NULL) {
-        player_ptr = character_ptr;
-    }
-    if (effect_req != NULL) {
-        uintptr_t base_address = (uintptr_t)GetModuleHandle(0);
-        DEBUG_PRINT("CHAR-PTR! PlayerPtr: %p (BaseAddress: %p + 0x%llX)", character_ptr, (void*)base_address, (unsigned long long)((uintptr_t)character_ptr) - base_address);
-        DEBUG_PRINT("[DS2_LOG] Effect To Apply! ID: %u, Qty: %u, Dur: %.2f, FA: %u, FB: %u, PAD: %u", effect_req->speffect_id, effect_req->quantity, effect_req->duration, effect_req->flag_a, effect_req->flag_b, effect_req->pad);
-    }
+    // if (effect_req != NULL) {
+    //     DEBUG_PRINT("[DS2_LOG] Effect To Apply! ID: %u, Qty: %u, Dur: %.2f, FA: %u, FB: %u, PAD: %u", effect_req->speffect_id, effect_req->quantity, effect_req->duration, effect_req->flag_a, effect_req->flag_b, effect_req->pad);
+    // }
 
     original_apply_special_effect(character_ptr, effect_req);
 }
@@ -907,6 +903,29 @@ enum ItemsHandling {
     #define GAME_VERSION 1
 #endif
 
+void send_death_link() {
+    if (!state.ap || state.ap->get_state() != APClient::State::SLOT_CONNECTED) return;
+    if (!state.death_link) return;
+
+    DEBUG_PRINT("Sending DeathLink");
+
+    nlohmann::json data;
+    data["time"]   = state.ap->get_server_time();
+    data["cause"]  = "Dark Souls II";
+    data["source"] = state.ap->get_slot();
+
+    state.ap->Bounce(data, {}, {}, {"DeathLink"});
+}
+
+int died_by_deathlink() {
+    if (state.died_by_deathlink) {
+        state.died_by_deathlink = 0;
+        return 1;
+    }
+
+    return 0;
+}
+
 void ap_on_room_info()
 {
     int items_handling = OTHER_WORLDS | STARTING_INVENTORY;
@@ -1030,6 +1049,15 @@ void ap_on_slot_connected(const nlohmann::json& data)
     locations_list.insert(locations_list.end(), missing_locations.begin(), missing_locations.end());
     locations_list.insert(locations_list.end(), checked_locations.begin(), checked_locations.end());
     state.ap->LocationScouts(locations_list);
+
+    if (data.contains("death_link")) {
+        state.death_link = data.at("death_link") != 0;
+        if (state.death_link) {
+            std::list<std::string> tags;
+            tags.push_back("DeathLink");
+            state.ap->ConnectUpdate(false, NULL, true, tags);
+        }
+    }
 
     state.slot_data_loaded = 1;
 }
@@ -1157,6 +1185,36 @@ void ap_on_print_json(const std::list<APClient::TextNode>& msg) {
     ap_on_print(message);
 }
 
+void ap_on_bounced(const nlohmann::json& cmd) {
+    if (!state.death_link) return;
+
+    auto tagsIt = cmd.find("tags");
+    auto dataIt = cmd.find("data");
+
+    if (tagsIt != cmd.end() && tagsIt->is_array()) {
+        int has_death_link = 0;
+        for (auto& tag : *tagsIt) {
+            if (tag.is_string() && tag == "DeathLink") {
+                has_death_link = 1;
+                break;
+            }
+        }
+        
+        if (has_death_link && dataIt != cmd.end() && dataIt->is_object()) {
+            nlohmann::json data = *dataIt;
+
+            std::string source = data["source"].is_string() ? data["source"].get<std::string>() : "";
+            std::string cause = data["cause"].is_string() ? data["cause"].get<std::string>() : "";
+        
+            if (!source.empty() && source != state.ap->get_slot()) {
+                DEBUG_PRINT("DeathLink Received | Source: %s Caused by: %s", source.c_str(), cause.c_str());
+                
+                queue_push(&state.death_link_queue, 1);
+            }
+        }
+    }
+}
+
 APClient* setup_apclient()
 {
     if (state.server_uri[0] == '\0') {
@@ -1176,6 +1234,7 @@ APClient* setup_apclient()
     client->set_items_received_handler(ap_on_items_received);
     client->set_print_handler(ap_on_print);
     client->set_print_json_handler(ap_on_print_json);
+    client->set_bounced_handler(ap_on_bounced);
 
     return client;
 }
@@ -1267,6 +1326,27 @@ void handle_give_items()
     }
 }
 
+void handle_death_link()
+{
+    if (libds2_get_player_state() != DS2_GAMESTATE_INGAME) return;
+
+    if (!queue_is_empty(&state.death_link_queue)) {
+        uint32_t _dummy;
+        while (queue_pop(&state.death_link_queue, &_dummy)) {
+            if (libds2_kill_player()) {
+                state.died_by_deathlink = 1;
+            }
+        }
+    }
+
+    if (libds2_player_just_died()) {
+        if (!died_by_deathlink()) {
+            send_death_link();
+        }
+    }
+
+}
+
 int patch_memory(void* address, void* patch, size_t size)
 {
     DWORD old_protect = 0;
@@ -1300,8 +1380,40 @@ int check_memory(void* address, void* pattern, size_t size)
     return 1;
 }
 
-int apply_special_effect(uint32_t effect_id) {
-    DEBUG_PRINT("apply_special_effect: %d", effect_id);
+DS2SpEffectRequest create_effect(uint32_t effect_id, uint8_t flag_a, uint8_t flag_b) {
+    DS2SpEffectRequest request = {0};
+    request.speffect_id = effect_id;
+    request.quantity = 1;
+    request.duration = -1;
+    request.pad = 0; // monologuemind: idk what this does
+
+    request.flag_a = flag_a;
+    request.flag_b = flag_b;
+
+    return request;
+}
+
+std::map<std::string, std::vector<DS2SpEffectRequest>> special_effects = {
+    {"Poison", {create_effect(900100, 26, 4)} },
+    {"Bleeding", {create_effect(900200, 25, 4), create_effect(900210, 25, 2)}}, // bleeding damage and effect
+    {"Curse", {create_effect(900400, 25, 4)} },
+    {"Toxic", {create_effect(900600, 27, 4)} },
+    {"Petrification", {create_effect(901100, 25, 4), create_effect(901110, 25, 1)}}, // petrification and curse death aura
+    {"Corrosion", {create_effect(120000310, 25, 2), create_effect(140001000, 25, 2), create_effect(140001010, 25, 2)}}, // Corrosion effects with the -7 durability in the middle
+    {"Hello Carving", {create_effect(60470000, 25, 2)} },
+    {"Thank You Carving", {create_effect(60480000, 25, 2)} },
+    {"Sorry Carving", {create_effect(60490000, 25, 2)} },
+    {"Very Good Carving", {create_effect(60500000, 25, 2)} },
+    {"Fire & Knockdown", {create_effect(900500, 25, 4)} },
+    {"Immolation", {create_effect(33210000, 25, 4), create_effect(33210000, 25, 2), create_effect(33210005, 25, 2), create_effect(33210010, 25, 4)} }, // base, fire, and damage
+    {"Firebomb", {create_effect(60570000, 25, 2)} },
+    {"Black Firebomb", {create_effect(60575000, 25, 2)} },
+};
+
+std::string selected_effect_key = "Poison";
+
+int apply_special_effect() {
+    DEBUG_PRINT("apply_special_effect: %s", selected_effect_key.c_str());
     // TODO: queue the effect
     if (libds2_get_player_state() != DS2_GAMESTATE_INGAME && player_ptr != NULL)
     {
@@ -1311,68 +1423,18 @@ int apply_special_effect(uint32_t effect_id) {
     }
 
     if (original_apply_special_effect) {
-        DS2SpEffectRequest request = {0};
-        request.speffect_id = effect_id;
-        request.quantity = 1;
-        request.duration = -1;
-        request.pad = 0; // monologuemind: idk what this does
+        if (!player_ptr) player_ptr = libds2_get_player_sp_effect_ptr();
 
-        request.flag_a = -1;
-        request.flag_b = -1;
-
-        switch (effect_id) {
-        case 900100: // poison
-            request.flag_a = 26;
-            request.flag_b = 4;
-            break;
-        case 900200: // bleeding damage
-            request.flag_a = 25;
-            request.flag_b = 4;
-            break;
-        case 900210: // bleeding effect
-            request.flag_a = 25;
-            request.flag_b = 2;
-            break;
-        case 900400: // curse
-            request.flag_a = 25;
-            request.flag_b = 4;
-            break;
-        case 900600: // toxic
-            request.flag_a = 27;
-            request.flag_b = 4;
-            break;
-        case 901100: // petrification death aura
-            request.flag_a = 25;
-            request.flag_b = 4;
-            break;
-        case 901110: // curse death aura
-            request.flag_a = 25;
-            request.flag_b = 1;
-            break;
-        case 120000310: // corrosive
-            request.flag_a = 25;
-            request.flag_b = 2;
-            break;
-        case 60470000: // hello
-            request.flag_a = 25;
-            request.flag_b = 2;
-            break;
-        case 60480000: // thank you
-            request.flag_a = 25;
-            request.flag_b = 2;
-            break;
-        case 60490000: // sorry
-            request.flag_a = 25;
-            request.flag_b = 2;
-            break;
-        case 60500000: // very good
-            request.flag_a = 25;
-            request.flag_b = 2;
-            break;
+        auto it = special_effects.find(selected_effect_key);
+        if (it != special_effects.end()) {
+            for (DS2SpEffectRequest& request : it->second)
+            {
+                detour_apply_special_effect(player_ptr, &request);
+            }
         }
-
-        if (request.flag_a != -1 && request.flag_b != -1) {
-            detour_apply_special_effect(player_ptr, &request);
+        else {
+            DEBUG_PRINT("Please select a valid special effect");
+            return 0;
         }
     }
 
@@ -1510,40 +1572,24 @@ void render_overlay()
                 state.slot_refused = 0;
                 connecting = true;
             }
-            
-            if (ImGui::Button("poison")) {
-                apply_special_effect(900100); // poison
+
+            if (ImGui::BeginCombo("Select Special Effect", selected_effect_key.c_str())) {
+                for (auto const& [key, val] : special_effects) {
+                    bool is_selected = (selected_effect_key == key);
+
+                    if (ImGui::Selectable(key.c_str(), is_selected)) {
+                        selected_effect_key = key;
+                    }
+
+                    if (is_selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
             }
-            if (ImGui::Button("bleeding-damage")) {
-                apply_special_effect(900200); // bleeding-damage
-            }
-            if (ImGui::Button("bleeding-effect")) {
-                apply_special_effect(900210); // bleeding-effect
-            }
-            if (ImGui::Button("toxic")) {
-                apply_special_effect(900600); // toxic
-            }
-            if (ImGui::Button("curse")) {
-                apply_special_effect(900400); // curse
-            }
-            if (ImGui::Button("petrification")) {
-                apply_special_effect(901100); // petrification
-                apply_special_effect(901110);
-            }
-            if (ImGui::Button("corrosive")) {
-                apply_special_effect(120000310); // corrosive
-            }
-            if (ImGui::Button("hello")) {
-                apply_special_effect(60470000); // hello
-            }
-            if (ImGui::Button("thank")) {
-                apply_special_effect(60480000); // thank you
-            }
-            if (ImGui::Button("sorry")) {
-                apply_special_effect(60490000); // sorry
-            }
-            if (ImGui::Button("good")) {
-                apply_special_effect(60500000); // very good
+
+            if (ImGui::Button("Apply Effect")) {
+                apply_special_effect(); // Apply Effect
             }
             
 
@@ -1670,6 +1716,9 @@ int init()
     for (int i = 0; i < UNUSED_ITEM_COUNT; ++i) {
         state.unused_items[i].item_id = UNUSED_ITEM_IDS[i];
     }
+    state.death_link = 0;
+    state.died_by_deathlink = 0;
+    state.death_link_queue = {0};
 
 #ifdef MOD_DEBUG
     strncpy(state.slot_name, "Player1", sizeof(state.slot_name));
@@ -1696,6 +1745,7 @@ DWORD WINAPI run(LPVOID)
         if (state.ap->get_state() == APClient::State::SLOT_CONNECTED) {
             handle_check_locations();
             handle_give_items();
+            handle_death_link();
 
             if (state.goaled) {
                 state.ap->StatusUpdate(APClient::ClientStatus::GOAL);
