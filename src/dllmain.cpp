@@ -72,18 +72,21 @@ HOOK_LIST(INIT_ORIGINAL)
 // with most of them commented so this should be enough
 // Still make it go arround cause of the checks
 #define QUEUE_MAX 4096
-typedef struct {
-    uint32_t entries[QUEUE_MAX];
+template<typename T>
+struct Queue {
+    T entries[QUEUE_MAX];
     int read;
     int write;
-} Queue;
+};
 
-int queue_is_empty(Queue* q)
+template<typename T>
+int queue_is_empty(Queue<T>* q)
 {
     return q->read == q->write;
 }
 
-int queue_push(Queue* q, uint32_t value)
+template<typename T>
+int queue_push(Queue<T>* q, const T& value)
 {
     int next = (q->write + 1) % QUEUE_MAX;
 
@@ -96,7 +99,8 @@ int queue_push(Queue* q, uint32_t value)
     return 1;
 }
 
-int queue_pop(Queue* q, uint32_t* out)
+template<typename T>
+int queue_pop(Queue<T>* q, T* out)
 {
     if (q->read == q->write) {
         return 0; // no more to read
@@ -202,9 +206,10 @@ typedef struct {
     int death_link;
     int died_by_deathlink;
 
-    Queue item_queue;
-    Queue location_queue;
-    Queue death_link_queue;
+    Queue<uint32_t> item_queue;
+    Queue<uint32_t> location_queue;
+    Queue<uint32_t> death_link_queue;
+    Queue<std::string> effect_queue;
     CRITICAL_SECTION queue_lock;
 
     APLocationMapping location_mappings[MAX_LOCATIONS];
@@ -407,9 +412,9 @@ void check_location(uint32_t id, APLocationType type)
 }
 
 #if DS2_64
-void detour_apply_special_effect(void* character_ptr, DS2SpEffectRequest* effect_req)
+void detour_apply_special_effect(void* character_ptr, DS2SpEffectParam* effect_req)
 #elif DS2_32
-void __fastcall detour_apply_special_effect(void* character_ptr, DS2SpEffectRequest* effect_req)
+void __fastcall detour_apply_special_effect(void* character_ptr, DS2SpEffectParam* effect_req)
 #endif
 {
     // if (effect_req != NULL) {
@@ -1155,6 +1160,7 @@ void ap_on_location_info(const std::list<APClient::NetworkItem>& network_items)
 
 void ap_on_items_received(const std::list<APClient::NetworkItem>& received_items)
 {
+    // TODO(monologuemind): we'll have to intercept when something is a real item vs a trap/effect
     for (const auto& item : received_items) {
         if (item.index + 1 > state.save_data.item_received_count) {
             queue_push(&state.item_queue, (uint32_t)item.item);
@@ -1209,7 +1215,7 @@ void ap_on_bounced(const nlohmann::json& cmd) {
             if (!source.empty() && source != state.ap->get_slot()) {
                 DEBUG_PRINT("DeathLink Received | Source: %s Caused by: %s", source.c_str(), cause.c_str());
                 
-                queue_push(&state.death_link_queue, 1);
+                queue_push(&state.death_link_queue, (uint32_t)1);
             }
         }
     }
@@ -1344,7 +1350,25 @@ void handle_death_link()
             send_death_link();
         }
     }
+}
 
+void handle_effect()
+{
+    if (libds2_get_player_state() != DS2_GAMESTATE_INGAME) return;
+
+    if (!queue_is_empty(&state.effect_queue)) {
+        std::string effect_key;
+        while (queue_pop(&state.effect_queue, &effect_key)) {
+            DEBUG_PRINT("handling effect: %s", effect_key.c_str());
+            int success = libds2_apply_special_effect(effect_key);
+            if (!success) {
+                DEBUG_PRINT("Unable to apply effect %s", effect_key.c_str());
+                continue;
+            }
+            // break after successful effect applied, allows for queuing multiple effects without crashing
+            break;
+        }
+    }
 }
 
 int patch_memory(void* address, void* patch, size_t size)
@@ -1373,67 +1397,6 @@ int check_memory(void* address, void* pattern, size_t size)
 
     for (size_t i = 0; i < size; i++) {
         if (dst[i] != src[i]) {
-            return 0;
-        }
-    }
-
-    return 1;
-}
-
-DS2SpEffectRequest create_effect(uint32_t effect_id, uint8_t flag_a, uint8_t flag_b) {
-    DS2SpEffectRequest request = {0};
-    request.speffect_id = effect_id;
-    request.quantity = 1;
-    request.duration = -1;
-    request.pad = 0; // monologuemind: idk what this does
-
-    request.flag_a = flag_a;
-    request.flag_b = flag_b;
-
-    return request;
-}
-
-std::map<std::string, std::vector<DS2SpEffectRequest>> special_effects = {
-    {"Poison", {create_effect(900100, 26, 4)} },
-    {"Bleeding", {create_effect(900200, 25, 4), create_effect(900210, 25, 2)}}, // bleeding damage and effect
-    {"Curse", {create_effect(900400, 25, 4)} },
-    {"Toxic", {create_effect(900600, 27, 4)} },
-    {"Petrification", {create_effect(901100, 25, 4), create_effect(901110, 25, 1)}}, // petrification and curse death aura
-    {"Corrosion", {create_effect(120000310, 25, 2), create_effect(140001000, 25, 2), create_effect(140001010, 25, 2)}}, // Corrosion effects with the -7 durability in the middle
-    {"Hello Carving", {create_effect(60470000, 25, 2)} },
-    {"Thank You Carving", {create_effect(60480000, 25, 2)} },
-    {"Sorry Carving", {create_effect(60490000, 25, 2)} },
-    {"Very Good Carving", {create_effect(60500000, 25, 2)} },
-    {"Fire & Knockdown", {create_effect(900500, 25, 4)} },
-    {"Immolation", {create_effect(33210000, 25, 4), create_effect(33210000, 25, 2), create_effect(33210005, 25, 2), create_effect(33210010, 25, 4)} }, // base, fire, and damage
-    {"Firebomb", {create_effect(60570000, 25, 2)} },
-    {"Black Firebomb", {create_effect(60575000, 25, 2)} },
-};
-
-std::string selected_effect_key = "Poison";
-
-int apply_special_effect() {
-    DEBUG_PRINT("apply_special_effect: %s", selected_effect_key.c_str());
-    // TODO: queue the effect
-    if (libds2_get_player_state() != DS2_GAMESTATE_INGAME && player_ptr != NULL)
-    {
-        DEBUG_PRINT("libds2_get_player_state() != DS2_GAMESTATE_INGAME");
-        DEBUG_PRINT("%d", libds2_get_player_state());
-        return 0;
-    }
-
-    if (original_apply_special_effect) {
-        if (!player_ptr) player_ptr = libds2_get_player_sp_effect_ptr();
-
-        auto it = special_effects.find(selected_effect_key);
-        if (it != special_effects.end()) {
-            for (DS2SpEffectRequest& request : it->second)
-            {
-                detour_apply_special_effect(player_ptr, &request);
-            }
-        }
-        else {
-            DEBUG_PRINT("Please select a valid special effect");
             return 0;
         }
     }
@@ -1571,27 +1534,7 @@ void render_overlay()
                 state.ap = setup_apclient();
                 state.slot_refused = 0;
                 connecting = true;
-            }
-
-            if (ImGui::BeginCombo("Select Special Effect", selected_effect_key.c_str())) {
-                for (auto const& [key, val] : special_effects) {
-                    bool is_selected = (selected_effect_key == key);
-
-                    if (ImGui::Selectable(key.c_str(), is_selected)) {
-                        selected_effect_key = key;
-                    }
-
-                    if (is_selected) {
-                        ImGui::SetItemDefaultFocus();
-                    }
-                }
-                ImGui::EndCombo();
-            }
-
-            if (ImGui::Button("Apply Effect")) {
-                apply_special_effect(); // Apply Effect
-            }
-            
+            }            
 
             ImGui::EndDisabled();
 
@@ -1628,6 +1571,31 @@ void render_overlay()
             ImGui::PushItemWidth(-1);
             ImGui::SliderFloat("##bg_alpha", &bg_alpha, 0.0f, 1.0f, "Background Alpha: %.2f");
             ImGui::PopItemWidth();
+
+            if (ImGui::BeginCombo("Select Special Effect", selected_effect_key.c_str())) {
+                for (auto const& [key, val] : special_effects) {
+                    bool is_selected = (selected_effect_key == key);
+                    if (ImGui::Selectable(key.c_str(), is_selected)) {
+                        selected_effect_key = key;
+                    }
+                    if (is_selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+
+            if (ImGui::Button("Apply Effect")) {
+                auto it = special_effects.find(selected_effect_key);
+                if (it != special_effects.end()) {
+                    DS2SpEffectRequest request = it->second;
+                    for (int i = 0; i < request.repeat_count; ++i) {
+                        DEBUG_PRINT("queuing effect: %s", selected_effect_key.c_str());
+                        queue_push(&state.effect_queue, selected_effect_key);
+                    }
+                }
+                //apply_special_effect(selected_effect_key); // Apply Effect
+            }
 
             ImGui::EndTabItem();
         }
@@ -1717,8 +1685,6 @@ int init()
         state.unused_items[i].item_id = UNUSED_ITEM_IDS[i];
     }
     state.death_link = 0;
-    state.died_by_deathlink = 0;
-    state.death_link_queue = {0};
 
 #ifdef MOD_DEBUG
     strncpy(state.slot_name, "Player1", sizeof(state.slot_name));
@@ -1746,6 +1712,7 @@ DWORD WINAPI run(LPVOID)
             handle_check_locations();
             handle_give_items();
             handle_death_link();
+            handle_effect();
 
             if (state.goaled) {
                 state.ap->StatusUpdate(APClient::ClientStatus::GOAL);

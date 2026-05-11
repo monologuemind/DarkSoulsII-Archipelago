@@ -1,6 +1,9 @@
 #pragma once
 #include <stdint.h>
 #include <windows.h>
+#include <vector>
+#include <string>
+#include <map>
 
 #ifdef _M_X64
     #define DS2_64 1
@@ -27,6 +30,11 @@ typedef struct {
     uint8_t flag_a;
     uint8_t flag_b;
     uint16_t pad;
+} DS2SpEffectParam;
+
+typedef struct {
+    int repeat_count;
+    std::vector<DS2SpEffectParam> effects_to_apply;
 } DS2SpEffectRequest;
 
 typedef struct {
@@ -574,11 +582,9 @@ uintptr_t DS2_PARAM_RING_PARAM = 0;
    Function Typedefs
    ========================================================= */
 
-//#if DS2_64
-typedef void(__fastcall* ds2_apply_special_effect_t)(void* character_ptr, DS2SpEffectRequest* effect_req);
-//#elif DS2_32
-//typedef void(__thiscall* ds2_apply_special_effect_t)(void* pSpEffectCtrl, DS2SpEffectParam* status, float* duration);
-//#endif
+//typedef void(__fastcall* ds2_apply_special_effect_t)(void* character_ptr, DS2SpEffectParam* effect_req);
+typedef void(__thiscall *ds2_apply_special_effect_t)(void* character_ptr, DS2SpEffectParam* effect_req);
+ds2_apply_special_effect_t ds2_apply_special_effect = 0;
 
 typedef void (__thiscall *ds2_set_map_entity_picked_up_t)(
     DS2MapItemPackEntityData* param_1,
@@ -697,7 +703,11 @@ int libds2_is_player_ingame();
 int libds2_set_event_flag(uint32_t flag_id, uint8_t state);
 int libds2_is_item_popup_open();
 int libds2_patch_param_table(uintptr_t table_ptr, param_patch_fn fn, void* context);
-int libds2_apply_special_effect(uint32_t effect_id);
+int libds2_kill_player();
+int libds2_player_just_died();
+void* libds2_get_player_sp_effect_ptr();
+int libds2_is_player_sp_effect_ptr(void* ptr);
+int libds2_apply_special_effect(std::string effect_key);
 
 /* =========================================================
    Implementation
@@ -754,8 +764,8 @@ int libds2_init()
     ds2_create_popup_structure = (ds2_create_popup_structure_t)(base_address + DS2_FUNCTION_CREATE_POPUP_STRUCTURE);
     ds2_show_item_popup = (ds2_show_item_popup_t)(base_address + DS2_FUNCTION_SHOW_ITEM_POPUP);
     ds2_can_inventory_fit_items = (ds2_can_inventory_fit_items_t)(base_address + DS2_FUNCTION_CAN_INVENTORY_FIT_ITEMS);
-
     ds2_write_event_flag = (ds2_write_event_flag_t)(base_address + DS2_FUNCTION_WRITE_EVENT_FLAG);
+    ds2_apply_special_effect = (ds2_apply_special_effect_t)(base_address + DS2_FUNCTION_APPLY_SPECIAL_EFFECT);
 
     DS2_PARAM_ITEM_LOT_PARAM2_OTHER = resolve_pointer_chain_retry(
         base_address, item_lot_param2_other_chain,
@@ -912,26 +922,6 @@ int libds2_player_just_died() {
     return 0;
 }
 
-int libds2_is_player_sp_effect_ptr(void* ptr) {
-    printf("base_address_g: %p\n", (void*)base_address_g);
-    uintptr_t DS2_PLAYER = resolve_pointer_chain_retry(
-        base_address_g, player_chain,
-        sizeof(player_chain) / sizeof(player_chain[0])
-    );
-
-    if (!DS2_PLAYER) {
-        printf("NO DS2_PLAYER AVAILABLE WITH OUR OFFSET\n");
-        return 0;
-    }
-
-    void* chr_sp_effect_ctrl = *(void**)(DS2_PLAYER + DS2_OFFSET(0x3E0, 0x2D4));
-
-    printf("chr_sp_effect_ctrl: %p\n", chr_sp_effect_ctrl);
-
-    return chr_sp_effect_ctrl && ptr == chr_sp_effect_ctrl;
-}
-
-
 void* libds2_get_player_sp_effect_ptr() {
     uintptr_t DS2_PLAYER = resolve_pointer_chain_retry(
         base_address_g, player_chain,
@@ -946,6 +936,73 @@ void* libds2_get_player_sp_effect_ptr() {
     void* chr_sp_effect_ctrl = *(void**)(DS2_PLAYER + DS2_OFFSET(0x3E0, 0x2D4));
 
     return chr_sp_effect_ctrl;
+}
+
+int libds2_is_player_sp_effect_ptr(void* ptr) {
+    void* chr_sp_effect_ctrl = libds2_get_player_sp_effect_ptr();
+
+    printf("chr_sp_effect_ctrl: %p\n", chr_sp_effect_ctrl);
+
+    return chr_sp_effect_ctrl && ptr == chr_sp_effect_ctrl;
+}
+
+DS2SpEffectParam create_effect(uint32_t effect_id, uint8_t flag_a, uint8_t flag_b) {
+    DS2SpEffectParam request = { 0 };
+    request.speffect_id = effect_id;
+    request.quantity = 1;
+    request.duration = -1;
+    request.pad = 0; // monologuemind: idk what this does
+
+    request.flag_a = flag_a;
+    request.flag_b = flag_b;
+
+    return request;
+}
+
+std::map<std::string, DS2SpEffectRequest> special_effects = {
+    {"Poison", {1, {create_effect(900100, 26, 4)}} },
+    {"Bleeding", {1, {create_effect(900200, 25, 4), create_effect(900210, 25, 2)}}}, // bleeding damage and effect
+    {"Curse", {1, {create_effect(900400, 25, 4)} }},
+    {"Toxic", {1, {create_effect(900600, 27, 4)} }},
+    {"Petrification", {1, {create_effect(901100, 25, 4), create_effect(901110, 25, 1)}}}, // petrification and curse death aura
+    // repeat_count set to 120 to break equipped gear as -7 is only partial reduction on most gear, could change to allow for dynamic set
+    {"Corrosion", {120, {create_effect(120000310, 25, 2), create_effect(140001000, 25, 2), create_effect(140001010, 25, 2)}}}, // Corrosion effects with the -7 durability in the middle
+    {"Hello Carving", {1, {create_effect(60470000, 25, 2)} }},
+    {"Thank You Carving", {1, {create_effect(60480000, 25, 2)} }},
+    {"Sorry Carving", {1, {create_effect(60490000, 25, 2)} }},
+    {"Very Good Carving", {1, {create_effect(60500000, 25, 2)} }},
+    {"Fire & Knockdown", {1, {create_effect(900500, 25, 4)} }},
+    {"Immolation", {1, {create_effect(33210000, 25, 4), create_effect(33210000, 25, 2), create_effect(33210005, 25, 2), create_effect(33210010, 25, 4)} }}, // base, fire, and damage
+    {"Firebomb", {1, {create_effect(60570000, 25, 2)} }},
+    {"Black Firebomb", {1, {create_effect(60575000, 25, 2)} }},
+};
+
+std::string selected_effect_key = "Poison";
+
+int libds2_apply_special_effect(std::string effect_key) {
+    if (ds2_apply_special_effect) {
+        if (!player_ptr) player_ptr = libds2_get_player_sp_effect_ptr();
+        if (!player_ptr) {
+            printf("player_ptr unresolved after attempt to acquire it at: %p\n", player_ptr);
+            return 0;
+        }
+
+        //DEBUG_PRINT("repeat_count: %d", request.repeat_count);
+        //DEBUG_PRINT("effects_to_apply.size(): %d", (int)request.effects_to_apply.size());
+        //for (int i = 0; i < request.repeat_count; ++i) {
+            //DEBUG_PRINT("i: %d", i);
+
+        auto it = special_effects.find(effect_key);
+        if (it != special_effects.end()) {
+            for (DS2SpEffectParam& effect_to_apply : it->second.effects_to_apply)
+            {
+                ds2_apply_special_effect(player_ptr, &effect_to_apply);
+            }
+        }
+        //}
+    }
+
+    return 1;
 }
 
 #endif // LIBDS2_IMPLEMENTATION
