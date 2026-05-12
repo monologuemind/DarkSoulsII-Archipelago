@@ -966,7 +966,7 @@ std::map<std::string, DS2SpEffectRequest> special_effects = {
     {"Toxic", {1, {create_effect(900600, 27, 4)} }},
     {"Petrification", {1, {create_effect(901100, 25, 4), create_effect(901110, 25, 1)}}}, // petrification and curse death aura
     // repeat_count set to 120 to break equipped gear as -7 is only partial reduction on most gear, could change to allow for dynamic set
-    {"Corrosion", {120, {create_effect(120000310, 25, 2), create_effect(140001000, 25, 2), create_effect(140001010, 25, 2)}}}, // Corrosion effects with the -7 durability in the middle
+    {"Corrosion", {60, {create_effect(120000310, 25, 2), create_effect(140001000, 25, 2), create_effect(140001010, 25, 2)}}}, // Corrosion effects with the -7 durability in the middle
     {"Hello Carving", {1, {create_effect(60470000, 25, 2)} }},
     {"Thank You Carving", {1, {create_effect(60480000, 25, 2)} }},
     {"Sorry Carving", {1, {create_effect(60490000, 25, 2)} }},
@@ -987,11 +987,6 @@ int libds2_apply_special_effect(std::string effect_key) {
             return 0;
         }
 
-        //DEBUG_PRINT("repeat_count: %d", request.repeat_count);
-        //DEBUG_PRINT("effects_to_apply.size(): %d", (int)request.effects_to_apply.size());
-        //for (int i = 0; i < request.repeat_count; ++i) {
-            //DEBUG_PRINT("i: %d", i);
-
         auto it = special_effects.find(effect_key);
         if (it != special_effects.end()) {
             for (DS2SpEffectParam& effect_to_apply : it->second.effects_to_apply)
@@ -999,7 +994,11 @@ int libds2_apply_special_effect(std::string effect_key) {
                 ds2_apply_special_effect(player_ptr, &effect_to_apply);
             }
         }
-        //}
+
+        if (effect_key == "Petrification") {
+            // kill player to mimic petrification death
+            libds2_kill_player();
+        }
     }
 
     return 1;
