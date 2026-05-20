@@ -133,6 +133,7 @@ typedef struct {
     int64_t archipelago_id;
     uint32_t item_id;
     uint32_t ap_item_id;
+    uint32_t player;
     wchar_t item_name[MAX_ITEM_NAME];
 } LocationReward;
 
@@ -151,7 +152,8 @@ typedef struct {
 
 enum APItemType {
     APITEM_ITEM  = 1,
-    APITEM_EVENT = 2
+    APITEM_EVENT = 2,
+    APITEM_TRAP = 3
 };
 
 typedef struct {
@@ -206,10 +208,14 @@ typedef struct {
     int death_link;
     int died_by_deathlink;
 
+    int random_trap_carving;
+    int random_death_carving;
+    int ds2_shared_traps; // this allows players to send a trap to someone while also triggering it for themselves
+
     Queue<uint32_t> item_queue;
     Queue<uint32_t> location_queue;
     Queue<uint32_t> death_link_queue;
-    Queue<std::string> effect_queue;
+    Queue<uint32_t> effect_queue;
     CRITICAL_SECTION queue_lock;
 
     APLocationMapping location_mappings[MAX_LOCATIONS];
@@ -370,6 +376,16 @@ void store_save_data()
     CloseHandle(file);
 }
 
+bool catch_trap_range(uint32_t item_id) {
+        bool is_trap = 90000000 <= item_id && item_id <= 90001500;
+        if (is_trap) {
+            queue_push(&state.effect_queue, item_id);
+            DEBUG_PRINT("pushed trap %u", item_id);
+        }
+
+        return is_trap;
+}
+
 void handle_set_event_flag(uint32_t flag_id)
 {
     DEBUG_PRINT("handling new set event flag: %d", flag_id);
@@ -399,6 +415,13 @@ void check_location(uint32_t id, APLocationType type)
 
         UnusedItem* unused_item = get_unused_item(reward->item_id);
         if (!unused_item) continue;
+
+        if (state.ds2_shared_traps || reward->player == state.ap->get_player_number()) {
+            if (catch_trap_range(reward->ap_item_id)) {
+                continue;
+            }
+        }
+
         for (int j = 0; j < MAX_ITEM_NAME; j++) {
             unused_item->item_name[j] = reward->item_name[j];
             if (reward->item_name[j] == L'\0') break;
@@ -909,32 +932,32 @@ enum ItemsHandling {
 #endif
 
 void send_death_link() {
-    if (!state.ap || state.ap->get_state() != APClient::State::SLOT_CONNECTED) return;
-    if (!state.death_link) return;
+   if (!state.ap || state.ap->get_state() != APClient::State::SLOT_CONNECTED) return;
+   if (!state.death_link) return;
 
-    DEBUG_PRINT("Sending DeathLink");
+   DEBUG_PRINT("Sending DeathLink");
 
-    nlohmann::json data;
-    data["time"]   = state.ap->get_server_time();
-    data["cause"]  = "Dark Souls II";
-    data["source"] = state.ap->get_slot();
+   nlohmann::json data;
+   data["time"]   = state.ap->get_server_time();
+   data["cause"]  = "Dark Souls II";
+   data["source"] = state.ap->get_slot();
 
-    state.ap->Bounce(data, {}, {}, {"DeathLink"});
+   state.ap->Bounce(data, {}, {}, {"DeathLink"});
 }
 
 int died_by_deathlink() {
-    if (state.died_by_deathlink) {
-        state.died_by_deathlink = 0;
-        return 1;
-    }
+   if (state.died_by_deathlink) {
+       state.died_by_deathlink = 0;
+       return 1;
+   }
 
-    return 0;
+   return 0;
 }
 
 void ap_on_room_info()
 {
     int items_handling = OTHER_WORLDS | STARTING_INVENTORY;
-    APClient::Version ap_version = { 0, 6, 4 };
+    APClient::Version ap_version = { 0, 6, 5 };
     state.ap->ConnectSlot(state.slot_name, state.password, items_handling, {}, ap_version);
 }
 
@@ -1056,12 +1079,27 @@ void ap_on_slot_connected(const nlohmann::json& data)
     state.ap->LocationScouts(locations_list);
 
     if (data.contains("death_link")) {
-        state.death_link = data.at("death_link") != 0;
-        if (state.death_link) {
-            std::list<std::string> tags;
-            tags.push_back("DeathLink");
-            state.ap->ConnectUpdate(false, NULL, true, tags);
-        }
+       state.death_link = data.at("death_link") != 0;
+       if (state.death_link) {
+           std::list<std::string> tags;
+           tags.push_back("DeathLink");
+           state.ap->ConnectUpdate(false, NULL, true, tags);
+       }
+    }
+
+    if (data.contains("random_trap_carving")) {
+        state.random_trap_carving = data.at("random_trap_carving") == 1;
+        DEBUG_PRINT("random_trap_carving: %d", state.random_trap_carving);
+    }
+
+    if (data.contains("random_death_carving")) {
+        state.random_death_carving = data.at("random_death_carving") == 1;
+        DEBUG_PRINT("random_death_carving: %d", state.random_death_carving);
+    }
+
+    if (data.contains("ds2_shared_traps")) {
+        state.ds2_shared_traps = data.at("ds2_shared_traps") == 1;
+        DEBUG_PRINT("ds2_shared_traps: %d", state.ds2_shared_traps);
     }
 
     state.slot_data_loaded = 1;
@@ -1109,10 +1147,16 @@ void ap_on_location_info(const std::list<APClient::NetworkItem>& network_items)
 
         reward->archipelago_id = network_item.location;
         reward->ap_item_id = network_item.item;
+        reward->player = network_item.player;
 
         int is_our_item = network_item.player == state.ap->get_player_number();
         if (is_our_item) {
             APItemMapping* item_mapping = get_item_mapping(network_item.item);
+            if (item_mapping == 0) {
+                DEBUG_PRINT("\t no mapping for %lld", network_item.item);
+                continue;
+            }
+
             if (item_mapping->item_type == APITEM_ITEM) {
                 reward->item_id = network_item.item;
             }
@@ -1160,11 +1204,16 @@ void ap_on_location_info(const std::list<APClient::NetworkItem>& network_items)
 
 void ap_on_items_received(const std::list<APClient::NetworkItem>& received_items)
 {
-    // TODO(monologuemind): we'll have to intercept when something is a real item vs a trap/effect
     for (const auto& item : received_items) {
         if (item.index + 1 > state.save_data.item_received_count) {
-            queue_push(&state.item_queue, (uint32_t)item.item);
-            DEBUG_PRINT("pushed item %u", (uint32_t)item.item);
+            uint32_t item_id = (uint32_t)item.item;
+            
+            if (catch_trap_range(item_id)) {
+                continue;
+            }
+
+            queue_push(&state.item_queue, item_id);
+            DEBUG_PRINT("pushed item %u", item_id);
             state.save_data.item_received_count++;
         }
     }
@@ -1214,7 +1263,10 @@ void ap_on_bounced(const nlohmann::json& cmd) {
         
             if (!source.empty() && source != state.ap->get_slot()) {
                 DEBUG_PRINT("DeathLink Received | Source: %s Caused by: %s", source.c_str(), cause.c_str());
-                
+                // carving on same frame
+                if (state.random_death_carving) {
+                    queue_push(&state.effect_queue, libds2_get_random_carving());
+                }
                 queue_push(&state.death_link_queue, (uint32_t)1);
             }
         }
@@ -1287,7 +1339,7 @@ void handle_give_items()
             ERROR_PRINT("item %d does not have a mapping", item_id);
             continue;
         }
-
+      
         DS2ItemStruct item_struct = {0};
         item_struct.item_id = item_id;
 
@@ -1349,6 +1401,10 @@ void handle_death_link()
         if (!died_by_deathlink()) {
             send_death_link();
         }
+        // carving on same frame
+        if (state.random_death_carving) {
+            libds2_apply_special_effect(libds2_get_random_carving());
+        }
     }
 }
 
@@ -1357,13 +1413,18 @@ void handle_effect()
     if (libds2_get_player_state() != DS2_GAMESTATE_INGAME) return;
 
     if (!queue_is_empty(&state.effect_queue)) {
-        std::string effect_key;
+        uint32_t effect_key;
         while (queue_pop(&state.effect_queue, &effect_key)) {
-            DEBUG_PRINT("handling effect: %s", effect_key.c_str());
+            DEBUG_PRINT("handling effect: %d", effect_key);
             int success = libds2_apply_special_effect(effect_key);
             if (!success) {
-                DEBUG_PRINT("Unable to apply effect %s", effect_key.c_str());
+                DEBUG_PRINT("Unable to apply effect %d", effect_key);
                 continue;
+            }
+            
+            // carving on same frame
+            if (state.random_trap_carving) {
+                libds2_apply_special_effect(libds2_get_random_carving());
             }
             // break after successful effect applied, allows for queuing multiple effects without crashing
             break;
@@ -1572,31 +1633,6 @@ void render_overlay()
             ImGui::SliderFloat("##bg_alpha", &bg_alpha, 0.0f, 1.0f, "Background Alpha: %.2f");
             ImGui::PopItemWidth();
 
-            if (ImGui::BeginCombo("Select Special Effect", selected_effect_key.c_str())) {
-                for (auto const& [key, val] : special_effects) {
-                    bool is_selected = (selected_effect_key == key);
-                    if (ImGui::Selectable(key.c_str(), is_selected)) {
-                        selected_effect_key = key;
-                    }
-                    if (is_selected) {
-                        ImGui::SetItemDefaultFocus();
-                    }
-                }
-                ImGui::EndCombo();
-            }
-
-            if (ImGui::Button("Apply Effect")) {
-                auto it = special_effects.find(selected_effect_key);
-                if (it != special_effects.end()) {
-                    DS2SpEffectRequest request = it->second;
-                    for (int i = 0; i < request.repeat_count; ++i) {
-                        DEBUG_PRINT("queuing effect: %s", selected_effect_key.c_str());
-                        queue_push(&state.effect_queue, selected_effect_key);
-                    }
-                }
-                //apply_special_effect(selected_effect_key); // Apply Effect
-            }
-
             ImGui::EndTabItem();
         }
 
@@ -1685,6 +1721,9 @@ int init()
         state.unused_items[i].item_id = UNUSED_ITEM_IDS[i];
     }
     state.death_link = 0;
+    state.random_trap_carving = 0;
+    state.random_death_carving = 0;
+    state.ds2_shared_traps = 0;
 
 #ifdef MOD_DEBUG
     strncpy(state.slot_name, "Player1", sizeof(state.slot_name));

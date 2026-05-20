@@ -33,6 +33,7 @@ typedef struct {
 } DS2SpEffectParam;
 
 typedef struct {
+    std::string name;
     int repeat_count;
     std::vector<DS2SpEffectParam> effects_to_apply;
 } DS2SpEffectRequest;
@@ -707,7 +708,8 @@ int libds2_kill_player();
 int libds2_player_just_died();
 void* libds2_get_player_sp_effect_ptr();
 int libds2_is_player_sp_effect_ptr(void* ptr);
-int libds2_apply_special_effect(std::string effect_key);
+int libds2_apply_special_effect(uint32_t effect_key);
+uint32_t libds2_get_random_carving();
 
 /* =========================================================
    Implementation
@@ -959,27 +961,27 @@ DS2SpEffectParam create_effect(uint32_t effect_id, uint8_t flag_a, uint8_t flag_
     return request;
 }
 
-std::map<std::string, DS2SpEffectRequest> special_effects = {
-    {"Poison", {1, {create_effect(900100, 26, 4)}} },
-    {"Bleeding", {1, {create_effect(900200, 25, 4), create_effect(900210, 25, 2)}}}, // bleeding damage and effect
-    {"Curse", {1, {create_effect(900400, 25, 4)} }},
-    {"Toxic", {1, {create_effect(900600, 27, 4)} }},
-    {"Petrification", {1, {create_effect(901100, 25, 4), create_effect(901110, 25, 1)}}}, // petrification and curse death aura
-    // repeat_count set to 120 to break equipped gear as -7 is only partial reduction on most gear, could change to allow for dynamic set
-    {"Corrosion", {60, {create_effect(120000310, 25, 2), create_effect(140001000, 25, 2), create_effect(140001010, 25, 2)}}}, // Corrosion effects with the -7 durability in the middle
-    {"Hello Carving", {1, {create_effect(60470000, 25, 2)} }},
-    {"Thank You Carving", {1, {create_effect(60480000, 25, 2)} }},
-    {"Sorry Carving", {1, {create_effect(60490000, 25, 2)} }},
-    {"Very Good Carving", {1, {create_effect(60500000, 25, 2)} }},
-    {"Fire & Knockdown", {1, {create_effect(900500, 25, 4)} }},
-    {"Immolation", {1, {create_effect(33210000, 25, 4), create_effect(33210000, 25, 2), create_effect(33210005, 25, 2), create_effect(33210010, 25, 4)} }}, // base, fire, and damage
-    {"Firebomb", {1, {create_effect(60570000, 25, 2)} }},
-    {"Black Firebomb", {1, {create_effect(60575000, 25, 2)} }},
+std::map<uint32_t, DS2SpEffectRequest> special_effects = {
+    {90000000, {"Poison", 1, {create_effect(900100, 26, 4)}} },
+    {90000100, {"Bleeding", 1, {create_effect(900200, 25, 4), create_effect(900210, 25, 2)}}}, // bleeding damage and effect
+    {90000200, {"Curse", 1, {create_effect(900400, 25, 4)} }},
+    {90000300, {"Fire & Knockdown", 1, {create_effect(900500, 25, 4)} }},
+    {90000400, {"Toxic", 1, {create_effect(900600, 27, 4)} }},
+    {90000500, {"Petrification", 1, {create_effect(901100, 25, 4), create_effect(901110, 25, 1)}}}, // petrification and curse death aura
+    // repeat_count set to 60 to break equipped gear as -7 is only partial reduction on most gear
+    {90000600, {"Slight Corrosion", 10, {create_effect(120000310, 25, 2), create_effect(140001000, 25, 2), create_effect(140001010, 25, 2)}}}, // Corrosion effects with the -7 durability in the middle
+    {90000700, {"Medium Corrosion", 30, {create_effect(120000310, 25, 2), create_effect(140001000, 25, 2), create_effect(140001010, 25, 2)}}}, // Corrosion effects with the -7 durability in the middle
+    {90000800, {"Heavy Corrosion", 60, {create_effect(120000310, 25, 2), create_effect(140001000, 25, 2), create_effect(140001010, 25, 2)}}}, // Corrosion effects with the -7 durability in the middle
+    {90000900, {"Hello Carving", 1, {create_effect(60470000, 25, 2)} }},
+    {90001000, {"Thank You Carving", 1, {create_effect(60480000, 25, 2)} }},
+    {90001100, {"Sorry Carving", 1, {create_effect(60490000, 25, 2)} }},
+    {90001200, {"Very Good Carving", 1, {create_effect(60500000, 25, 2)} }},
+    {90001300, {"Immolation", 1, {create_effect(33210000, 25, 4), create_effect(33210005, 25, 2), create_effect(33210010, 25, 4)} }}, // base, fire, and damage
+    {90001400, {"Firebomb", 1, {create_effect(60570000, 25, 2)} }},
+    {90001500, {"Black Firebomb", 1, {create_effect(60575000, 25, 2)} }},
 };
 
-std::string selected_effect_key = "Poison";
-
-int libds2_apply_special_effect(std::string effect_key) {
+int libds2_apply_special_effect(uint32_t effect_key) {
     if (ds2_apply_special_effect) {
         if (!player_ptr) player_ptr = libds2_get_player_sp_effect_ptr();
         if (!player_ptr) {
@@ -995,13 +997,24 @@ int libds2_apply_special_effect(std::string effect_key) {
             }
         }
 
-        if (effect_key == "Petrification") {
-            // kill player to mimic petrification death
+        // kill player to mimic petrification death
+        if (effect_key == 90000500) {
             libds2_kill_player();
         }
     }
 
     return 1;
+}
+
+uint32_t carvings[] = {
+ 90000900, // Hello Carving
+ 90001000, // Thank You Carving
+ 90001100, // Sorry Carving
+ 90001200, // Very Good Carving
+};
+
+uint32_t libds2_get_random_carving() {
+    return carvings[(rand() % 4)];
 }
 
 #endif // LIBDS2_IMPLEMENTATION
