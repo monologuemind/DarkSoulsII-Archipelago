@@ -437,13 +437,13 @@ void check_location(uint32_t id, APLocationType type)
 #if DS2_64
 void detour_apply_special_effect(void* character_ptr, DS2SpEffectParam* effect_req)
 #elif DS2_32
-void __fastcall detour_apply_special_effect(void* character_ptr, DS2SpEffectParam* effect_req)
+void __fastcall detour_apply_special_effect(void* character_ptr, void*, DS2SpEffectParam* effect_req)
 #endif
 {
-    // if (effect_req != NULL) {
-    //     DEBUG_PRINT("[DS2_LOG] Effect To Apply! ID: %u, Qty: %u, Dur: %.2f, FA: %u, FB: %u, PAD: %u", effect_req->speffect_id, effect_req->quantity, effect_req->duration, effect_req->flag_a, effect_req->flag_b, effect_req->pad);
-    // }
-
+    //if (effect_req != NULL) {
+    //    DEBUG_PRINT("libds2_is_player_sp_effect_ptr: %d", libds2_is_player_sp_effect_ptr(character_ptr));
+    //    DEBUG_PRINT("[DS2_LOG] Effect To Apply! ID: %u, Qty: %u, Dur: %.2f, FA: %u, FB: %u, PAD: %u", effect_req->speffect_id, effect_req->quantity, effect_req->duration, effect_req->flag_a, effect_req->flag_b, effect_req->pad);
+    //}
     original_apply_special_effect(character_ptr, effect_req);
 }
 
@@ -1633,6 +1633,38 @@ void render_overlay()
             ImGui::SliderFloat("##bg_alpha", &bg_alpha, 0.0f, 1.0f, "Background Alpha: %.2f");
             ImGui::PopItemWidth();
 
+#ifdef MOD_DEBUG
+            std::string effect_name = "";
+            auto it = special_effects.find(selected_key);
+            if (it != special_effects.end()) {
+                effect_name = it->second.name;
+            }
+            if (ImGui::BeginCombo("Select Special Effect", effect_name.c_str())) {
+                for (const auto& pair : special_effects) {
+                    bool is_selected = (selected_key == pair.first);
+                    if (ImGui::Selectable(pair.second.name.c_str(), is_selected)) {
+                        selected_key = pair.first;
+                    }
+                    if (is_selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            
+            if (ImGui::Button("Apply Effect")) {
+                auto it = special_effects.find(selected_key);
+                if (it != special_effects.end()) {
+                    DS2SpEffectRequest request = it->second;
+                    for (int i = 0; i < request.repeat_count; ++i) {
+                        DEBUG_PRINT("queuing effect: %d", selected_key);
+                        libds2_apply_special_effect(selected_key);
+                    }
+                }
+            }
+#endif
+            
+
             ImGui::EndTabItem();
         }
 
@@ -1665,10 +1697,10 @@ void render_overlay()
 
 int init()
 {
-//#ifdef MOD_DEBUG
-//    AllocConsole();
-//    freopen_s((FILE**)stdout, "CONOUT$", "w", stdout);
-//#else
+#ifdef MOD_DEBUG
+    AllocConsole();
+    freopen_s((FILE**)stdout, "CONOUT$", "w", stdout);
+#else
     FILE* log_file = freopen("archipelago-debug.log", "a", stdout);
     if (!log_file) {
         DWORD err = GetLastError();
@@ -1678,7 +1710,7 @@ int init()
     else {
         setvbuf(stdout, NULL, _IONBF, 0);
     }
-//#endif
+#endif
 
     if (!CreateDirectoryA("archipelago", 0)) {
         DWORD err = GetLastError();

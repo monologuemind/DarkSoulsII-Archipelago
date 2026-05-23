@@ -470,7 +470,7 @@ void* player_ptr = NULL;
 
 #define DS2_SINGLETON_GameManagerImp              DS2_OFFSET(0x16148f0, 0x1150414)
 
-#define DS2_FUNCTION_APPLY_SPECIAL_EFFECT         DS2_OFFSET(0x14BEC0, 0x0)
+#define DS2_FUNCTION_APPLY_SPECIAL_EFFECT         DS2_OFFSET(0x14BEC0, 0x1DC980)
 
 #define DS2_FUNCTION_SET_MAP_ENTITY_PICKED_UP     DS2_OFFSET(0x1DE6C0, 0x257060)
 #define DS2_FUNCTION_GIVE_ITEMS_ON_REWARD         DS2_OFFSET(0x199CC0, 0x21D3C0)
@@ -583,7 +583,6 @@ uintptr_t DS2_PARAM_RING_PARAM = 0;
    Function Typedefs
    ========================================================= */
 
-//typedef void(__fastcall* ds2_apply_special_effect_t)(void* character_ptr, DS2SpEffectParam* effect_req);
 typedef void(__thiscall *ds2_apply_special_effect_t)(void* character_ptr, DS2SpEffectParam* effect_req);
 ds2_apply_special_effect_t ds2_apply_special_effect = 0;
 
@@ -935,7 +934,7 @@ void* libds2_get_player_sp_effect_ptr() {
         return 0;
     }
 
-    void* chr_sp_effect_ctrl = *(void**)(DS2_PLAYER + DS2_OFFSET(0x3E0, 0x2D4));
+    void* chr_sp_effect_ctrl = *(void**)(DS2_PLAYER + DS2_OFFSET(0x3E0, 0x308));
 
     return chr_sp_effect_ctrl;
 }
@@ -943,7 +942,7 @@ void* libds2_get_player_sp_effect_ptr() {
 int libds2_is_player_sp_effect_ptr(void* ptr) {
     void* chr_sp_effect_ctrl = libds2_get_player_sp_effect_ptr();
 
-    printf("chr_sp_effect_ctrl: %p\n", chr_sp_effect_ctrl);
+    printf("ptr: %p, chr_sp_effect_ctrl: %p\n", ptr, chr_sp_effect_ctrl);
 
     return chr_sp_effect_ctrl && ptr == chr_sp_effect_ctrl;
 }
@@ -981,11 +980,13 @@ std::map<uint32_t, DS2SpEffectRequest> special_effects = {
     {90001500, {"Black Firebomb", 1, {create_effect(60575000, 25, 2)} }},
 };
 
+uint32_t selected_key = 90000000;
+
 int libds2_apply_special_effect(uint32_t effect_key) {
     if (ds2_apply_special_effect) {
         if (!player_ptr) player_ptr = libds2_get_player_sp_effect_ptr();
         if (!player_ptr) {
-            printf("player_ptr unresolved after attempt to acquire it at: %p\n", player_ptr);
+            //printf("player_ptr unresolved after attempt to acquire it at: %p\n", player_ptr);
             return 0;
         }
 
@@ -993,6 +994,7 @@ int libds2_apply_special_effect(uint32_t effect_key) {
         if (it != special_effects.end()) {
             for (DS2SpEffectParam& effect_to_apply : it->second.effects_to_apply)
             {
+                //printf("applying effect: %d\n", effect_to_apply.speffect_id);
                 ds2_apply_special_effect(player_ptr, &effect_to_apply);
             }
         }
