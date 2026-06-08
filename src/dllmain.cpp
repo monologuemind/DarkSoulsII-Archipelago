@@ -1639,8 +1639,12 @@ void render_overlay()
 
             ImGui::PushItemWidth(-1);
             ImGui::SliderFloat("##bg_alpha", &bg_alpha, 0.0f, 1.0f, "Background Alpha: %.2f");
-            ImGui::PopItemWidth();
+            ImGui::PopItemWidth();            
 
+            ImGui::EndTabItem();
+        }
+
+        if (ImGui::BeginTabItem("DEBUG MENU")) {
 #ifdef MOD_DEBUG
             std::string effect_name = "";
             auto it = special_effects.find(selected_key);
@@ -1659,7 +1663,7 @@ void render_overlay()
                 }
                 ImGui::EndCombo();
             }
-            
+
             if (ImGui::Button("Apply Effect")) {
                 auto it = special_effects.find(selected_key);
                 if (it != special_effects.end()) {
@@ -1671,8 +1675,6 @@ void render_overlay()
                 }
             }
 #endif
-            
-
             ImGui::EndTabItem();
         }
 
@@ -1709,14 +1711,11 @@ int init()
     AllocConsole();
     freopen_s((FILE**)stdout, "CONOUT$", "w", stdout);
 #else
-    FILE* log_file = freopen("archipelago-debug.log", "a", stdout);
+    FILE* log_file = freopen("archipelago.log", "a", stdout);
     if (!log_file) {
         DWORD err = GetLastError();
         printf("Error opening log file. Error code: %lu\n", err);
         return 0;
-    }
-    else {
-        setvbuf(stdout, NULL, _IONBF, 0);
     }
 #endif
 
