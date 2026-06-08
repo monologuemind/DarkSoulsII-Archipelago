@@ -699,7 +699,6 @@ typedef void (*param_patch_fn)(
 
 int libds2_init();
 int libds2_give_items(DS2ItemBagContent items);
-int libds2_is_player_ingame();
 int libds2_set_event_flag(uint32_t flag_id, uint8_t state);
 int libds2_is_item_popup_open();
 int libds2_patch_param_table(uintptr_t table_ptr, param_patch_fn fn, void* context);
@@ -968,9 +967,9 @@ std::map<uint32_t, DS2SpEffectRequest> special_effects = {
     {90000400, {"Toxic", 1, {create_effect(900600, 27, 4)} }},
     {90000500, {"Petrification", 1, {create_effect(901100, 25, 4), create_effect(901110, 25, 1)}}}, // petrification and curse death aura
     // repeat_count set to 60 to break equipped gear as -7 is only partial reduction on most gear
-    {90000600, {"Slight Corrosion", 10, {create_effect(120000310, 25, 2), create_effect(140001000, 25, 2), create_effect(140001010, 25, 2)}}}, // Corrosion effects with the -7 durability in the middle
-    {90000700, {"Medium Corrosion", 30, {create_effect(120000310, 25, 2), create_effect(140001000, 25, 2), create_effect(140001010, 25, 2)}}}, // Corrosion effects with the -7 durability in the middle
-    {90000800, {"Heavy Corrosion", 60, {create_effect(120000310, 25, 2), create_effect(140001000, 25, 2), create_effect(140001010, 25, 2)}}}, // Corrosion effects with the -7 durability in the middle
+    {90000600, {"Slight Corrosion", 10, {create_effect(120000310, 25, 2), create_effect(140001000, 25, 2), create_effect(140001000, 25, 2), create_effect(140001010, 25, 2)}}}, // Corrosion effects with the -7 durability in the middle
+    {90000700, {"Medium Corrosion", 20, {create_effect(120000310, 25, 2), create_effect(140001000, 25, 2), create_effect(140001000, 25, 2), create_effect(140001000, 25, 2), create_effect(140001010, 25, 2)}}}, // Corrosion effects with the -7 durability in the middle
+    {90000800, {"Heavy Corrosion", 30, {create_effect(120000310, 25, 2), create_effect(140001000, 25, 2), create_effect(140001000, 25, 2), create_effect(140001000, 25, 2), create_effect(140001000, 25, 2), create_effect(140001010, 25, 2)}}}, // Corrosion effects with the -7 durability in the middle
     {90000900, {"Hello Carving", 1, {create_effect(60470000, 25, 2)} }},
     {90001000, {"Thank You Carving", 1, {create_effect(60480000, 25, 2)} }},
     {90001100, {"Sorry Carving", 1, {create_effect(60490000, 25, 2)} }},

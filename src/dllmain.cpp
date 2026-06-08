@@ -1262,7 +1262,9 @@ void ap_on_bounced(const nlohmann::json& cmd) {
             std::string cause = data["cause"].is_string() ? data["cause"].get<std::string>() : "";
         
             if (!source.empty() && source != state.ap->get_slot()) {
-                DEBUG_PRINT("DeathLink Received | Source: %s Caused by: %s", source.c_str(), cause.c_str());
+                const std::string msg = "DeathLink Received | Source: " + source + " Caused by : " + cause;
+                DEBUG_PRINT("%s", msg.c_str());
+                ap_on_print(msg);
                 // carving on same frame
                 if (state.random_death_carving) {
                     queue_push(&state.effect_queue, libds2_get_random_carving());
@@ -1388,12 +1390,16 @@ void handle_death_link()
 {
     if (libds2_get_player_state() != DS2_GAMESTATE_INGAME) return;
 
-    if (!queue_is_empty(&state.death_link_queue)) {
+    // we can control holding deathlinks if the player needs to confirm items in the popup (can't if they die naturally)
+    if (!queue_is_empty(&state.death_link_queue) && !libds2_is_item_popup_open()) {
         uint32_t _dummy;
         while (queue_pop(&state.death_link_queue, &_dummy)) {
             if (libds2_kill_player()) {
                 state.died_by_deathlink = 1;
             }
+            
+            // should we drain all death links at once, or force them to happen sequentially?
+            break;
         }
     }
 
@@ -1410,7 +1416,9 @@ void handle_death_link()
 
 void handle_effect()
 {
+    // only drain effect_queue if the item popup has been dismissed (and thus all items have been drained from the item_queue)
     if (libds2_get_player_state() != DS2_GAMESTATE_INGAME) return;
+    if (libds2_is_item_popup_open()) return;
 
     if (!queue_is_empty(&state.effect_queue)) {
         uint32_t effect_key;
@@ -1595,7 +1603,7 @@ void render_overlay()
                 state.ap = setup_apclient();
                 state.slot_refused = 0;
                 connecting = true;
-            }            
+            }
 
             ImGui::EndDisabled();
 
@@ -1658,7 +1666,7 @@ void render_overlay()
                     DS2SpEffectRequest request = it->second;
                     for (int i = 0; i < request.repeat_count; ++i) {
                         DEBUG_PRINT("queuing effect: %d", selected_key);
-                        libds2_apply_special_effect(selected_key);
+                        queue_push(&state.effect_queue, selected_key);
                     }
                 }
             }
