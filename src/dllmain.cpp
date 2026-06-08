@@ -1644,8 +1644,8 @@ void render_overlay()
             ImGui::EndTabItem();
         }
 
-        if (ImGui::BeginTabItem("DEBUG MENU")) {
 #ifdef MOD_DEBUG
+        if (ImGui::BeginTabItem("DEBUG MENU")) {
             std::string effect_name = "";
             auto it = special_effects.find(selected_key);
             if (it != special_effects.end()) {
@@ -1674,9 +1674,9 @@ void render_overlay()
                     }
                 }
             }
-#endif
             ImGui::EndTabItem();
         }
+#endif
 
         ImGui::EndTabBar();
     }
