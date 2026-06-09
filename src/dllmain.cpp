@@ -279,10 +279,13 @@ static void build_area_progress(std::set<int64_t> checked) {
     for (int i = 0; i < state.location_mapping_count; ++i) {
         APLocationMapping* mapping = &state.location_mappings[i];
         if (mapping->location_type == LOC_SHOP_LINEUP) continue; // unsure if this is correct since shops are in regions (some shops move though)
-        if (mapping->keep_unrandomized) continue;
+        if (mapping->keep_unrandomized) continue;        
 
         for (int a = 0; a < MAX_MAIN_REGIONS; ++a) {
-            if (strstr(mapping->region_name, area_progress[a].ap_region_prefix.c_str()) == mapping->region_name) {
+            // TODO: Change this to instead be region_id so we don't have to do string comparisons (requires updating the generator)
+            char* str_str = strstr(mapping->region_name, area_progress[a].ap_region_prefix.c_str());
+            int cond = str_str == mapping->region_name;
+            if (cond) {
                 area_progress[a].total_locations++;
 
                 for (int j = 0; j < mapping->reward_count; ++j) {
@@ -1110,8 +1113,6 @@ void ap_on_slot_connected(const nlohmann::json& data)
     locations_list.insert(locations_list.end(), checked_locations.begin(), checked_locations.end());
     state.ap->LocationScouts(locations_list);
 
-    build_area_progress(checked_locations);
-
     state.slot_data_loaded = 1;
 }
 
@@ -1202,6 +1203,10 @@ void ap_on_location_info(const std::list<APClient::NetworkItem>& network_items)
             );
         }
     }
+
+    // moved to be after location rewards are populated
+    std::set<int64_t> checked_locations = state.ap->get_checked_locations();
+    build_area_progress(checked_locations);
 
     randomize();
 }
