@@ -42,7 +42,7 @@
 
 #define PANIC(fmt, ...) do { \
     char buf[1024]; \
-    snprintf(buf, sizeof(buf), fmt, ##__VA_ARGS__); \
+    snprintf(buf, sizeof(buf), fmt, __VA_ARGS__); \
     MessageBoxA(NULL, buf, "Dark Souls II Archipelago Error", MB_OK | MB_ICONERROR); \
     ExitProcess(1); \
 } while(0)
@@ -226,66 +226,51 @@ typedef struct {
 
 static ModState state = {0};
 
-struct ConsoleColors {
-    ImVec4 Red       = ImVec4(1.00f, 0.25f, 0.25f, 1.00f);
-    ImVec4 Green     = ImVec4(0.20f, 0.80f, 0.20f, 1.00f);
-    ImVec4 Yellow    = ImVec4(1.00f, 0.80f, 0.00f, 1.00f);
-    ImVec4 Blue      = ImVec4(0.20f, 0.50f, 1.00f, 1.00f);
-    ImVec4 Magenta   = ImVec4(0.80f, 0.30f, 0.80f, 1.00f);
-    ImVec4 Cyan      = ImVec4(0.00f, 0.80f, 0.80f, 1.00f);
-    ImVec4 Plum      = ImVec4(0.87f, 0.63f, 0.87f, 1.00f);
-    ImVec4 SlateBlue = ImVec4(0.42f, 0.35f, 0.80f, 1.00f);
-    ImVec4 Salmon    = ImVec4(1.00f, 0.50f, 0.45f, 1.00f);
-    ImVec4 Grey      = ImVec4(0.50f, 0.50f, 0.50f, 1.00f);
-    ImVec4 White     = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
-};
-static const ConsoleColors console_colors;
-
-void DrawTextLine(const std::list<ImGuiTextNode>& lineNodes) {
-    for (auto it = lineNodes.begin(); it != lineNodes.end(); ++it) {
-
-        ImGui::TextColored(it->color, "%s", it->text.c_str());
-
-        // If this isn't the last element, stay on the same line
-        if (std::next(it) != lineNodes.end()) {
-            ImGui::SameLine(0.0f, 0.0f);
-        }
-    }
-}
+static const ImVec4 CONSOLE_COLOR_RED       = ImVec4(1.00f, 0.25f, 0.25f, 1.00f);
+static const ImVec4 CONSOLE_COLOR_GREEN     = ImVec4(0.20f, 0.80f, 0.20f, 1.00f);
+static const ImVec4 CONSOLE_COLOR_YELLOW    = ImVec4(1.00f, 0.80f, 0.00f, 1.00f);
+static const ImVec4 CONSOLE_COLOR_BLUE      = ImVec4(0.20f, 0.50f, 1.00f, 1.00f);
+static const ImVec4 CONSOLE_COLOR_MAGENTA   = ImVec4(0.80f, 0.30f, 0.80f, 1.00f);
+static const ImVec4 CONSOLE_COLOR_CYAN      = ImVec4(0.00f, 0.80f, 0.80f, 1.00f);
+static const ImVec4 CONSOLE_COLOR_PLUM      = ImVec4(0.87f, 0.63f, 0.87f, 1.00f);
+static const ImVec4 CONSOLE_COLOR_SLATEBLUE = ImVec4(0.42f, 0.35f, 0.80f, 1.00f);
+static const ImVec4 CONSOLE_COLOR_SALMON    = ImVec4(1.00f, 0.50f, 0.45f, 1.00f);
+static const ImVec4 CONSOLE_COLOR_GREY      = ImVec4(0.50f, 0.50f, 0.50f, 1.00f);
+static const ImVec4 CONSOLE_COLOR_WHITE     = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
 
 // stolen from apclientpp/apclient.hpp:777 render_json function, adjusted for ImGui
 void apclient_textnode_to_imgui_textnode(const std::list<APClient::TextNode>& msg) {
     std::list<ImGuiTextNode> imgui_line {0};
 
     for (const auto& node: msg) {
-        ImVec4 color = console_colors.White;
+        ImVec4 color = CONSOLE_COLOR_WHITE;
         std::string text;
         if (node.type == "player_id") {
             int id = std::stoi(node.text);
-            if (node.color.empty() && state.ap->slot_concerns_self(id)) color = console_colors.Magenta; //magenta
-            else if (node.color.empty()) color = console_colors.Yellow; // yellow
+            if (node.color.empty() && state.ap->slot_concerns_self(id)) color = CONSOLE_COLOR_MAGENTA; //magenta
+            else if (node.color.empty()) color = CONSOLE_COLOR_YELLOW; // yellow
             text = state.ap->get_player_alias(id);
         } else if (node.type == "item_id") {
             int64_t id = std::stoll(node.text);
             if (node.color.empty()) {
-                if (node.flags & APClient::ItemFlags::FLAG_ADVANCEMENT) color = console_colors.Plum; // plum
-                else if (node.flags & APClient::ItemFlags::FLAG_NEVER_EXCLUDE) color = console_colors.SlateBlue; // slateblue
-                else if (node.flags & APClient::ItemFlags::FLAG_TRAP) color = console_colors.Salmon; // salmon
-                else color = console_colors.Cyan; // cyan
+                if (node.flags & APClient::ItemFlags::FLAG_ADVANCEMENT) color = CONSOLE_COLOR_PLUM; // plum
+                else if (node.flags & APClient::ItemFlags::FLAG_NEVER_EXCLUDE) color = CONSOLE_COLOR_SLATEBLUE; // slateblue
+                else if (node.flags & APClient::ItemFlags::FLAG_TRAP) color = CONSOLE_COLOR_SALMON; // salmon
+                else color = CONSOLE_COLOR_CYAN; // cyan
             }
             text = state.ap->get_item_name(id, state.ap->get_player_game(node.player));
         } else if (node.type == "location_id") {
             int64_t id = std::stoll(node.text);
-            if (node.color.empty()) color = console_colors.Blue; // blue
+            if (node.color.empty()) color = CONSOLE_COLOR_BLUE; // blue
             text = state.ap->get_location_name(id, state.ap->get_player_game(node.player));
         } else if (node.type == "hint_status") {
             text = node.text;
-            if (node.hintStatus == APClient::HINT_FOUND) color = console_colors.Green; // green
-            else if (node.hintStatus == APClient::HINT_UNSPECIFIED) color = console_colors.Grey; // grey
-            else if (node.hintStatus == APClient::HINT_NO_PRIORITY) color = console_colors.SlateBlue; // slateblue
-            else if (node.hintStatus == APClient::HINT_AVOID) color = console_colors.Salmon; // salmon
-            else if (node.hintStatus == APClient::HINT_PRIORITY) color = console_colors.Plum; // plum
-            else color = console_colors.Red;  // unknown status -> red
+            if (node.hintStatus == APClient::HINT_FOUND) color = CONSOLE_COLOR_GREEN; // green
+            else if (node.hintStatus == APClient::HINT_UNSPECIFIED) color = CONSOLE_COLOR_GREY; // grey
+            else if (node.hintStatus == APClient::HINT_NO_PRIORITY) color = CONSOLE_COLOR_SLATEBLUE; // slateblue
+            else if (node.hintStatus == APClient::HINT_AVOID) color = CONSOLE_COLOR_SALMON; // salmon
+            else if (node.hintStatus == APClient::HINT_PRIORITY) color = CONSOLE_COLOR_PLUM; // plum
+            else color = CONSOLE_COLOR_RED;  // unknown status -> red
         } else {
             text = node.text;
         }
@@ -1500,7 +1485,15 @@ void render_overlay()
 
             for (size_t i = 0; i < state.imgui_log.size(); ++i) {
                 const auto& imgui_line = state.imgui_log[i];
-                DrawTextLine(imgui_line);
+                for (auto it = imgui_line.begin(); it != imgui_line.end(); ++it) {
+
+                    ImGui::TextColored(it->color, "%s", it->text.c_str());
+
+                    // If this isn't the last element, stay on the same line
+                    if (std::next(it) != imgui_line.end()) {
+                        ImGui::SameLine(0.0f, 0.0f);
+                    }
+                }
             }
 
             if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) ImGui::SetScrollHereY(1.0f);
