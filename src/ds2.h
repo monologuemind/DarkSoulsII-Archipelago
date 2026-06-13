@@ -705,7 +705,6 @@ int libds2_patch_param_table(uintptr_t table_ptr, param_patch_fn fn, void* conte
 int libds2_kill_player();
 int libds2_player_just_died();
 void* libds2_get_player_sp_effect_ptr();
-int libds2_is_player_sp_effect_ptr(void* ptr);
 int libds2_apply_special_effect(uint32_t effect_key);
 uint32_t libds2_get_random_carving();
 
@@ -938,14 +937,6 @@ void* libds2_get_player_sp_effect_ptr() {
     return chr_sp_effect_ctrl;
 }
 
-int libds2_is_player_sp_effect_ptr(void* ptr) {
-    void* chr_sp_effect_ctrl = libds2_get_player_sp_effect_ptr();
-
-    printf("ptr: %p, chr_sp_effect_ctrl: %p\n", ptr, chr_sp_effect_ctrl);
-
-    return chr_sp_effect_ctrl && ptr == chr_sp_effect_ctrl;
-}
-
 DS2SpEffectParam create_effect(uint32_t effect_id, uint8_t flag_a, uint8_t flag_b) {
     DS2SpEffectParam request = { 0 };
     request.speffect_id = effect_id;
@@ -984,7 +975,6 @@ int libds2_apply_special_effect(uint32_t effect_key) {
     if (ds2_apply_special_effect) {
         if (!player_ptr) player_ptr = libds2_get_player_sp_effect_ptr();
         if (!player_ptr) {
-            //printf("player_ptr unresolved after attempt to acquire it at: %p\n", player_ptr);
             return 0;
         }
 
@@ -992,7 +982,6 @@ int libds2_apply_special_effect(uint32_t effect_key) {
         if (it != special_effects.end()) {
             for (DS2SpEffectParam& effect_to_apply : it->second.effects_to_apply)
             {
-                //printf("applying effect: %d\n", effect_to_apply.speffect_id);
                 ds2_apply_special_effect(player_ptr, &effect_to_apply);
             }
         }

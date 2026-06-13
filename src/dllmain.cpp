@@ -440,10 +440,6 @@ void detour_apply_special_effect(void* character_ptr, DS2SpEffectParam* effect_r
 void __fastcall detour_apply_special_effect(void* character_ptr, void*, DS2SpEffectParam* effect_req)
 #endif
 {
-    //if (effect_req != NULL) {
-    //    DEBUG_PRINT("libds2_is_player_sp_effect_ptr: %d", libds2_is_player_sp_effect_ptr(character_ptr));
-    //    DEBUG_PRINT("[DS2_LOG] Effect To Apply! ID: %u, Qty: %u, Dur: %.2f, FA: %u, FB: %u, PAD: %u", effect_req->speffect_id, effect_req->quantity, effect_req->duration, effect_req->flag_a, effect_req->flag_b, effect_req->pad);
-    //}
     original_apply_special_effect(character_ptr, effect_req);
 }
 
@@ -1598,7 +1594,7 @@ void render_overlay()
 
             ImGui::Spacing();
 
-            if (ImGui::Button("Connect")) {
+            if (ImGui::Button("Connect", ImVec2(-1, 0))) {
                 // NOTE perhaps race condition
                 state.ap = setup_apclient();
                 state.slot_refused = 0;
