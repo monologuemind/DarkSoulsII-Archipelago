@@ -134,7 +134,7 @@ typedef struct {
 typedef struct {
     uint32_t location_key;
     APLocationType location_type;
-    char region_name[64];
+    int region_id;
 
     float shop_price;
     int keep_unrandomized;
@@ -150,10 +150,11 @@ typedef struct {
 //#define MAX_SUB_REGIONS 77
 
 typedef struct {
-    std::string ap_region_prefix;
+    std::string original_name;
     int fmg_entry_id;
     int total_locations;
     int checked_locations;
+    wchar_t name_with_progress[MAX_AREA_NAME_LEN];
 } AreaProgress;
 
 // TODO: actually match prefix, these are the strings from the game itself
@@ -161,15 +162,15 @@ static AreaProgress area_progress[MAX_MAIN_REGIONS] = {
     { "Majula", 10040000 },
     { "Shaded Woods", 10320000 },
     { "Things Betwixt", 10020000 },
-    { "Forest of Fallen Giants", 10100000 }, // WTF do I do about the memory items like from Memory of Jeigh
+    { "Forest of Fallen Giants", 10100000 },
     { "Throne of Want", 20210002 },
-    { "Frozen Eleum Loyce ", 50370000 }, // TODO: Frigid Outskirts, should be under Frozen Eleum Loyce, same as others
-    { "Grand Cathedral", 50370001 },
+    { "Frozen Eleum Loyce ", 50370000 },
+    { "Grand Cathedral", 50370001 }, // no items in AP -- could move some from Frozen Eleum Loyce
     { "Iron Passage", 50360001 },
-    { "Brume Tower", 50360000 }, // TODO: IDK if this goes here: Memory of the Old Iron King
-    { "Dragon's Rest", 50350002 },
+    { "Brume Tower", 50360000 },
+    { "Dragon's Rest", 50350002 }, // no items in AP -- could move some from Dragon's Sanctum
     { "Dragon's Sanctum", 50350001 },
-    { "Shulva, Sanctum City", 50350000 }, // TODO: Figure out how to fix Cave of The Dead, doesn't contain this prefix in locations.py when it should for main areas
+    { "Shulva, Sanctum City", 50350000 },
     { "Dragon Shrine", 10270001 },
     { "Dragon Aerie", 10270000 },
     { "Aldia's Keep", 10150000 },
@@ -182,7 +183,7 @@ static AreaProgress area_progress[MAX_MAIN_REGIONS] = {
     { "Shrine of Amana", 20110000 },
     { "Drangleic Castle", 20210000 },
     { "Brightstone Cove Tseldora", 10140000 },
-    { "The Gutter", 10250000 }, // TODO: The Pit needs to be in here
+    { "The Gutter", 10250000 },
     { "Grave of Saints", 10340000 },
     { "Belfry Sol", 10190001 },
     { "Iron Keep", 10190000 },
@@ -278,19 +279,14 @@ static void build_area_progress(std::set<int64_t> checked) {
 
     for (int i = 0; i < state.location_mapping_count; ++i) {
         APLocationMapping* mapping = &state.location_mappings[i];
-        if (mapping->location_type == LOC_SHOP_LINEUP) continue; // unsure if this is correct since shops are in regions (some shops move though)
+        //if (mapping->location_type == LOC_SHOP_LINEUP) continue; // unsure if this is correct since shops are in regions (some shops move though)
         if (mapping->keep_unrandomized) continue;        
 
         for (int a = 0; a < MAX_MAIN_REGIONS; ++a) {
-            // TODO: Change this to instead be region_id so we don't have to do string comparisons (requires updating the generator)
-            char* str_str = strstr(mapping->region_name, area_progress[a].ap_region_prefix.c_str());
-            int cond = str_str == mapping->region_name;
-            if (cond) {
+            if (area_progress[a].fmg_entry_id == mapping->region_id) {
                 area_progress[a].total_locations++;
 
                 for (int j = 0; j < mapping->reward_count; ++j) {
-                    // TODO: do we need to handle bundles???
-                    // TODO: Maybe only the first match and break? maybe it doesn't matter percentage wise, just inflates totals
                     if (checked.find(mapping->location_rewards[j].archipelago_id) != checked.end()) {
                         area_progress[a].checked_locations++;
                         break;
@@ -298,6 +294,20 @@ static void build_area_progress(std::set<int64_t> checked) {
                 }
             }
         }
+    }
+
+    // Setup names
+    for (int a = 0; a < MAX_MAIN_REGIONS; ++a) {
+        float total = area_progress[a].total_locations;
+
+        if ((int)total == 0) {
+            swprintf(area_progress[a].name_with_progress, MAX_AREA_NAME_LEN, L"%S - No AP items in pool", area_progress[a].original_name.c_str());
+            continue;
+        }
+        float checked = area_progress[a].checked_locations;
+        int pct = (total > 0) ? round(checked * 100 / total) : 0;
+
+        swprintf(area_progress[a].name_with_progress, MAX_AREA_NAME_LEN, L"%S - %d/%d (%d%%)", area_progress[a].original_name.c_str(), (int)checked, (int)total, pct);
     }
 }
 
@@ -587,15 +597,7 @@ const wchar_t* __cdecl detour_get_fmg_entry(DS2FMGFileID file_id, int32_t entry_
     if (file_id == DS2_FMG_MAIN_REGION_NAMES && area_initialized) {
         for (int i = 0; i < MAX_MAIN_REGIONS; ++i) {
             if (area_progress[i].fmg_entry_id == entry_id) {
-                static wchar_t buf[MAX_AREA_NAME_LEN];
-
-                int total = area_progress[i].total_locations;
-                int checked = area_progress[i].checked_locations;
-                int pct = (total > 0) ? (checked * 100 / total) : 0;
-
-                swprintf(buf, MAX_AREA_NAME_LEN, L"%s - %d/%d (%d%%)", original_name, checked, total, pct);
-
-                return buf;
+                return area_progress[i].name_with_progress;
             }
         }
     }
@@ -1026,9 +1028,9 @@ void ap_on_slot_connected(const nlohmann::json& data)
         APLocationMapping* mapping = &state.location_mappings[state.location_mapping_count++];
         mapping->location_key = entry.at("location_key").get<int64_t>();
         
-        if (entry.contains("region_name")) {
-            std::string region_name = entry.at("region_name").get<std::string>();
-            strncpy_s(mapping->region_name, sizeof(mapping->region_name), region_name.c_str(), _TRUNCATE);
+        if (entry.contains("region_id")) {
+            int region_id = entry.at("region_id").get<int>();
+            mapping->region_id = region_id;
         }
 
         if (mapping->location_key >= LOC_SHOP_LINEUP) {
@@ -1280,10 +1282,17 @@ void handle_check_locations()
         APLocationMapping* mapping = get_location_mapping(location_key);
         if (!mapping) continue;
 
-        if (area_initialized && !mapping->keep_unrandomized && mapping->location_type != LOC_SHOP_LINEUP) {
+        // unsure if we should ignore shops or not, placement is somewhat unclear (in as far as moving shops go)
+        if (area_initialized && !mapping->keep_unrandomized /*&& mapping->location_type != LOC_SHOP_LINEUP*/) {
             for (int a = 0; a < MAX_MAIN_REGIONS; ++a) {
-                if (strstr(mapping->region_name, area_progress[a].ap_region_prefix.c_str()) == mapping->region_name) {
+                if (area_progress[a].fmg_entry_id == mapping->region_id) {
                     area_progress[a].checked_locations++;
+
+                    float total = area_progress[a].total_locations;
+                    float checked = area_progress[a].checked_locations;
+                    int pct = (total > 0) ? round(checked * 100 / total) : 0;
+
+                    swprintf(area_progress[a].name_with_progress, MAX_AREA_NAME_LEN, L"%S - %d/%d (%d%%)", area_progress[a].original_name.c_str(), (int)checked, (int)total, pct);
                     break;
                 }
             }
