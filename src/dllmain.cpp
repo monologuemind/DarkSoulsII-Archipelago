@@ -186,6 +186,12 @@ typedef struct {
 #define MAX_SEED_SIZE 256
 #define MAX_SERVER_URI 256
 #define MAX_REFUSE_REASON 512
+
+struct ImGuiTextNode {
+    std::string text;
+    ImVec4 color;
+};
+
 typedef struct {
     int stop;
 
@@ -230,9 +236,67 @@ typedef struct {
 
     // TODO maybe cap the size
     std::vector<std::string> console_log;
+    std::vector<std::list<ImGuiTextNode>> imgui_log;
 } ModState;
 
 static ModState state = {0};
+
+static const ImVec4 CONSOLE_COLOR_RED       = ImVec4(1.00f, 0.25f, 0.25f, 1.00f);
+static const ImVec4 CONSOLE_COLOR_GREEN     = ImVec4(0.20f, 0.80f, 0.20f, 1.00f);
+static const ImVec4 CONSOLE_COLOR_YELLOW    = ImVec4(1.00f, 0.80f, 0.00f, 1.00f);
+static const ImVec4 CONSOLE_COLOR_BLUE      = ImVec4(0.20f, 0.50f, 1.00f, 1.00f);
+static const ImVec4 CONSOLE_COLOR_MAGENTA   = ImVec4(0.80f, 0.30f, 0.80f, 1.00f);
+static const ImVec4 CONSOLE_COLOR_CYAN      = ImVec4(0.00f, 0.80f, 0.80f, 1.00f);
+static const ImVec4 CONSOLE_COLOR_PLUM      = ImVec4(0.87f, 0.63f, 0.87f, 1.00f);
+static const ImVec4 CONSOLE_COLOR_SLATEBLUE = ImVec4(0.42f, 0.35f, 0.80f, 1.00f);
+static const ImVec4 CONSOLE_COLOR_SALMON    = ImVec4(1.00f, 0.50f, 0.45f, 1.00f);
+static const ImVec4 CONSOLE_COLOR_GREY      = ImVec4(0.50f, 0.50f, 0.50f, 1.00f);
+static const ImVec4 CONSOLE_COLOR_WHITE     = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
+
+// stolen from apclientpp/apclient.hpp:777 render_json function, adjusted for ImGui
+void apclient_textnode_to_imgui_textnode(const std::list<APClient::TextNode>& msg) {
+    std::list<ImGuiTextNode> imgui_line {0};
+
+    for (const auto& node: msg) {
+        ImVec4 color = CONSOLE_COLOR_WHITE;
+        std::string text;
+        if (node.type == "player_id") {
+            int id = std::stoi(node.text);
+            if (node.color.empty() && state.ap->slot_concerns_self(id)) color = CONSOLE_COLOR_MAGENTA; //magenta
+            else if (node.color.empty()) color = CONSOLE_COLOR_YELLOW; // yellow
+            text = state.ap->get_player_alias(id);
+        } else if (node.type == "item_id") {
+            int64_t id = std::stoll(node.text);
+            if (node.color.empty()) {
+                if (node.flags & APClient::ItemFlags::FLAG_ADVANCEMENT) color = CONSOLE_COLOR_PLUM; // plum
+                else if (node.flags & APClient::ItemFlags::FLAG_NEVER_EXCLUDE) color = CONSOLE_COLOR_SLATEBLUE; // slateblue
+                else if (node.flags & APClient::ItemFlags::FLAG_TRAP) color = CONSOLE_COLOR_SALMON; // salmon
+                else color = CONSOLE_COLOR_CYAN; // cyan
+            }
+            text = state.ap->get_item_name(id, state.ap->get_player_game(node.player));
+        } else if (node.type == "location_id") {
+            int64_t id = std::stoll(node.text);
+            if (node.color.empty()) color = CONSOLE_COLOR_BLUE; // blue
+            text = state.ap->get_location_name(id, state.ap->get_player_game(node.player));
+        } else if (node.type == "hint_status") {
+            text = node.text;
+            if (node.hintStatus == APClient::HINT_FOUND) color = CONSOLE_COLOR_GREEN; // green
+            else if (node.hintStatus == APClient::HINT_UNSPECIFIED) color = CONSOLE_COLOR_GREY; // grey
+            else if (node.hintStatus == APClient::HINT_NO_PRIORITY) color = CONSOLE_COLOR_SLATEBLUE; // slateblue
+            else if (node.hintStatus == APClient::HINT_AVOID) color = CONSOLE_COLOR_SALMON; // salmon
+            else if (node.hintStatus == APClient::HINT_PRIORITY) color = CONSOLE_COLOR_PLUM; // plum
+            else color = CONSOLE_COLOR_RED;  // unknown status -> red
+        } else {
+            text = node.text;
+        }
+
+        ImGuiTextNode imgui_text_node;
+        imgui_text_node.text = text;
+        imgui_text_node.color = color;
+        imgui_line.push_back(imgui_text_node);
+    }
+    state.imgui_log.push_back(imgui_line);
+}
 
 APLocationMapping* get_location_mapping(uint32_t location_key)
 {
@@ -849,7 +913,7 @@ void randomize()
     shuffle(icontext.random, icontext.random_count, sizeof(int32_t));
     libds2_patch_param_table(DS2_PARAM_ITEM_LOT_PARAM2_OTHER, itemlot_patch_fn, &icontext);
 
-    icontext = {0};
+    icontext = ItemlotPatchContext{0};
     icontext.location_type = LOC_ITEMLOT_CHR;
     libds2_patch_param_table(DS2_PARAM_ITEM_LOT_PARAM2_CHR, itemlot_prepass_fn, &icontext);
     shuffle(icontext.guaranteed, icontext.guaranteed_count, sizeof(int32_t));
@@ -1233,6 +1297,7 @@ void ap_on_print(const std::string& msg) {
 
 void ap_on_print_json(const std::list<APClient::TextNode>& msg) {
     std::string message = state.ap->render_json(msg, APClient::RenderFormat::TEXT);
+    apclient_textnode_to_imgui_textnode(msg);
     ap_on_print(message);
 }
 
@@ -1610,15 +1675,16 @@ void render_overlay()
         if (ImGui::BeginTabItem("Console")) {
             ImGui::BeginChild("ConsoleChild", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
 
-            for (size_t i = 0; i < state.console_log.size(); ++i) {
-                const auto& line = state.console_log[i];
+            for (size_t i = 0; i < state.imgui_log.size(); ++i) {
+                const auto& imgui_line = state.imgui_log[i];
+                for (auto it = imgui_line.begin(); it != imgui_line.end(); ++it) {
 
-                ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x);
-                ImGui::TextUnformatted(line.c_str());
-                ImGui::PopTextWrapPos();
+                    ImGui::TextColored(it->color, "%s", it->text.c_str());
 
-                if (i + 1 < state.console_log.size()) {
-                    ImGui::Spacing();
+                    // If this isn't the last element, stay on the same line
+                    if (std::next(it) != imgui_line.end()) {
+                        ImGui::SameLine(0.0f, 0.0f);
+                    }
                 }
             }
 
