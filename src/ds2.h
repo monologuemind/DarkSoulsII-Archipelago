@@ -349,8 +349,10 @@ typedef enum {
 } DS2GameState;
 
 typedef enum {
-    DS2_FMG_ITEM_NAMES     = 8,
-    DS2_FMG_ITEM_SUMMARIES = 9
+    DS2_FMG_MAIN_REGION_NAMES = 5,
+    DS2_FMG_ITEM_NAMES        = 8,
+    DS2_FMG_ITEM_SUMMARIES    = 9,
+    DS2_FMG_SUB_REGION_NAMES  = 18
 } DS2FMGFileID;
 
 /* =========================================================
