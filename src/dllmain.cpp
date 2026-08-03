@@ -557,6 +557,21 @@ void handle_set_event_flag(uint32_t flag_id)
     state.save_data.event_flags[state.save_data.event_flag_count++] = flag_id;
 }
 
+void send_trap_link(int trap_code) {
+   if (!state.ap || state.ap->get_state() != APClient::State::SLOT_CONNECTED) return;
+   if (!state.trap_link) return;
+   if (trap_code < 90000000 || trap_code > 90001500) return;
+
+   DEBUG_PRINT("Sending TrapLink: %d", trap_code);
+
+   nlohmann::json data;
+   data["time"]   = state.ap->get_server_time();
+   data["source"] = state.ap->get_slot();
+   data["trap"]   = trap_code;
+
+   state.ap->Bounce(data, {}, {}, {"TrapLink"});
+}
+
 void check_location(uint32_t id, APLocationType type)
 {
     uint32_t location_key = id + (uint32_t)type;
@@ -1110,21 +1125,6 @@ void send_death_link() {
    state.ap->Bounce(data, {}, {}, {"DeathLink"});
 }
 
-void send_trap_link(int trap_code) {
-   if (!state.ap || state.ap->get_state() != APClient::State::SLOT_CONNECTED) return;
-   if (!state.trap_link) return;
-   if (trap_code < 90000000 || trap_code > 90001500) return;
-
-   DEBUG_PRINT("Sending TrapLink: %d", trap_code);
-
-   nlohmann::json data;
-   data["time"]   = state.ap->get_server_time();
-   data["source"] = state.ap->get_slot();
-   data["trap"]   = trap_code;
-
-   state.ap->Bounce(data, {}, {}, {"TrapLink"});
-}
-
 int died_by_deathlink() {
    if (state.died_by_deathlink) {
        state.died_by_deathlink = 0;
@@ -1263,12 +1263,12 @@ void ap_on_slot_connected(const nlohmann::json& data)
     locations_list.insert(locations_list.end(), checked_locations.begin(), checked_locations.end());
     state.ap->LocationScouts(locations_list);
 
+    std::list<std::string> tags;
+
     if (data.contains("death_link")) {
        state.death_link = data.at("death_link") != 0;
        if (state.death_link) {
-           std::list<std::string> tags;
            tags.push_back("DeathLink");
-           state.ap->ConnectUpdate(false, NULL, true, tags);
        }
     }
 
@@ -1289,6 +1289,9 @@ void ap_on_slot_connected(const nlohmann::json& data)
 
     if (data.contains("trap_link")) {
         state.trap_link = data.at("trap_link") != 0;
+        if (state.trap_link) {
+            tags.push_back("TrapLink");
+        }
         DEBUG_PRINT("trap_link: %d", state.trap_link);
     }
 
@@ -1302,9 +1305,7 @@ void ap_on_slot_connected(const nlohmann::json& data)
         }
     }
 
-    if (state.trap_link) {
-        std::list<std::string> tags;
-        tags.push_back("TrapLink");
+    if (state.death_link || state.trap_link) {
         state.ap->ConnectUpdate(false, NULL, true, tags);
     }
 
@@ -1942,6 +1943,7 @@ void render_overlay()
 
 #ifdef MOD_DEBUG
         if (ImGui::BeginTabItem("DEBUG MENU")) {
+            ImGui::Text("Chaos Sync");
             std::string effect_name = "";
             auto it = special_effects.find(selected_key);
             if (it != special_effects.end()) {
