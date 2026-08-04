@@ -398,6 +398,21 @@ void handle_set_event_flag(uint32_t flag_id)
     state.save_data.event_flags[state.save_data.event_flag_count++] = flag_id;
 }
 
+void send_trap_link(int trap_code) {
+   if (!state.ap || state.ap->get_state() != APClient::State::SLOT_CONNECTED) return;
+   if (!state.trap_link) return;
+   if (trap_code < 90000000 || trap_code > 90001500) return;
+
+   DEBUG_PRINT("Sending TrapLink: %d", trap_code);
+
+   nlohmann::json data;
+   data["time"]   = state.ap->get_server_time();
+   data["source"] = state.ap->get_slot();
+   data["trap"]   = trap_code;
+
+   state.ap->Bounce(data, {}, {}, {"TrapLink"});
+}
+
 void check_location(uint32_t id, APLocationType type)
 {
     uint32_t location_key = id + (uint32_t)type;
@@ -418,6 +433,7 @@ void check_location(uint32_t id, APLocationType type)
 
         if (state.ds2_shared_traps || reward->player == state.ap->get_player_number()) {
             if (catch_trap_range(reward->ap_item_id)) {
+                send_trap_link(reward->ap_item_id);
                 continue;
             }
         }
@@ -1073,13 +1089,12 @@ void ap_on_slot_connected(const nlohmann::json& data)
     locations_list.insert(locations_list.end(), missing_locations.begin(), missing_locations.end());
     locations_list.insert(locations_list.end(), checked_locations.begin(), checked_locations.end());
     state.ap->LocationScouts(locations_list);
+    std::list<std::string> tags;
 
     if (data.contains("death_link")) {
        state.death_link = data.at("death_link") != 0;
        if (state.death_link) {
-           std::list<std::string> tags;
            tags.push_back("DeathLink");
-           state.ap->ConnectUpdate(false, NULL, true, tags);
        }
     }
 
@@ -1096,6 +1111,28 @@ void ap_on_slot_connected(const nlohmann::json& data)
     if (data.contains("ds2_shared_traps")) {
         state.ds2_shared_traps = data.at("ds2_shared_traps") == 1;
         DEBUG_PRINT("ds2_shared_traps: %d", state.ds2_shared_traps);
+    }
+
+    if (data.contains("trap_link")) {
+        state.trap_link = data.at("trap_link") != 0;
+        if (state.trap_link) {
+            tags.push_back("TrapLink");
+        }
+        DEBUG_PRINT("trap_link: %d", state.trap_link);
+    }
+
+    if (data.contains("trap_data")) {
+        const nlohmann::json& td = data.at("trap_data");
+        for (auto& [key, value] : td.items()) {
+            int code = std::stoi(key);
+            if (90000000 <= code && code <= 90001500) {
+                state.trap_counts[(code - 90000000) / 100] = value.get<int>();
+            }
+        }
+    }
+
+    if (state.death_link || state.trap_link) {
+        state.ap->ConnectUpdate(false, NULL, true, tags);
     }
 
     state.slot_data_loaded = 1;
@@ -1205,6 +1242,7 @@ void ap_on_items_received(const std::list<APClient::NetworkItem>& received_items
             uint32_t item_id = (uint32_t)item.item;
             
             if (catch_trap_range(item_id)) {
+                send_trap_link(item_id);
                 continue;
             }
 
@@ -1237,37 +1275,104 @@ void ap_on_print_json(const std::list<APClient::TextNode>& msg) {
 }
 
 void ap_on_bounced(const nlohmann::json& cmd) {
-    if (!state.death_link) return;
-
     auto tagsIt = cmd.find("tags");
     auto dataIt = cmd.find("data");
 
-    if (tagsIt != cmd.end() && tagsIt->is_array()) {
-        int has_death_link = 0;
-        for (auto& tag : *tagsIt) {
-            if (tag.is_string() && tag == "DeathLink") {
-                has_death_link = 1;
-                break;
-            }
-        }
-        
-        if (has_death_link && dataIt != cmd.end() && dataIt->is_object()) {
-            nlohmann::json data = *dataIt;
+    if (tagsIt == cmd.end() || !tagsIt->is_array()) return;
+    if (dataIt == cmd.end() || !dataIt->is_object()) return;
 
-            std::string source = data["source"].is_string() ? data["source"].get<std::string>() : "";
-            std::string cause = data["cause"].is_string() ? data["cause"].get<std::string>() : "";
-        
-            if (!source.empty() && source != state.ap->get_slot()) {
-                const std::string msg = "DeathLink Received | Source: " + source + " Caused by : " + cause;
-                DEBUG_PRINT("%s", msg.c_str());
-                ap_on_print(msg);
-                // carving on same frame
-                if (state.random_death_carving) {
-                    queue_push(&state.effect_queue, libds2_get_random_carving());
-                }
-                queue_push(&state.death_link_queue, (uint32_t)1);
+    bool has_death_link = false;
+    bool has_trap_link = false;
+    for (auto& tag : *tagsIt) {
+        if (tag.is_string() && tag == "DeathLink") has_death_link = true;
+        if (tag.is_string() && tag == "TrapLink") has_trap_link = true;
+    }
+
+    if (has_death_link && state.death_link) {
+        nlohmann::json data = *dataIt;
+
+        std::string source = data["source"].is_string() ? data["source"].get<std::string>() : "";
+        std::string cause = data["cause"].is_string() ? data["cause"].get<std::string>() : "";
+    
+        if (!source.empty() && source != state.ap->get_slot()) {
+            DEBUG_PRINT("DeathLink Received | Source: %s Caused by: %s", source.c_str(), cause.c_str());
+
+            std::list<ImGuiTextNode> imgui_line;
+            ImGuiTextNode n1; n1.text = "DeathLink Received | Source: "; n1.color = CONSOLE_COLOR_WHITE;
+            ImGuiTextNode n2; n2.text = source; n2.color = CONSOLE_COLOR_CYAN;
+            ImGuiTextNode n3; n3.text = " Caused by: "; n3.color = CONSOLE_COLOR_WHITE;
+            ImGuiTextNode n4; n4.text = cause; n4.color = CONSOLE_COLOR_SALMON;
+            imgui_line.push_back(n1);
+            imgui_line.push_back(n2);
+            imgui_line.push_back(n3);
+            imgui_line.push_back(n4);
+            state.imgui_log.push_back(imgui_line);
+
+            // carving on same frame
+            if (state.random_death_carving) {
+                queue_push(&state.effect_queue, libds2_get_random_carving());
+            }
+            queue_push(&state.death_link_queue, (uint32_t)1);
+        }
+    }
+
+    if (has_trap_link && state.trap_link) {
+        std::string source = (*dataIt)["source"].is_string() ? (*dataIt)["source"].get<std::string>() : "";
+        if (source.empty() || source == state.ap->get_slot()) return;
+
+        int selected = 0;
+
+        // if it's a DS2 trap code, apply that exact trap
+        if ((*dataIt)["trap"].is_number_integer()) {
+            int trap_code = (*dataIt)["trap"].get<int>();
+            if (90000000 <= trap_code && trap_code <= 90001500) {
+                selected = trap_code;
             }
         }
+
+        // otherwise pick a random enabled trap by weight
+        if (selected == 0) {
+            int total_weight = 0;
+            for (int i = 0; i < 16; i++) {
+                total_weight += state.trap_counts[i];
+            }
+            if (total_weight <= 0) {
+                DEBUG_PRINT("No linked traps enabled — ignoring");
+                return;
+            }
+
+            static std::mt19937 rng(std::random_device{}());
+            std::uniform_int_distribution<int> dist(0, total_weight - 1);
+            int roll = dist(rng);
+
+            for (int i = 0; i < 16; i++) {
+                roll -= state.trap_counts[i];
+                if (roll < 0) {
+                    selected = 90000000 + i * 100;
+                    break;
+                }
+            }
+        }
+
+        queue_push(&state.effect_queue, (uint32_t)selected);
+
+        auto effect_it = special_effects.find(selected);
+        std::string trap_name = (effect_it != special_effects.end())
+            ? effect_it->second.name
+            : "Unknown";
+
+        std::list<ImGuiTextNode> imgui_line;
+        ImGuiTextNode n1; n1.text = "TrapLink Received | Trap: "; n1.color = CONSOLE_COLOR_WHITE;
+        ImGuiTextNode n2; n2.text = trap_name; n2.color = CONSOLE_COLOR_SALMON;
+        ImGuiTextNode n3; n3.text = " from "; n3.color = CONSOLE_COLOR_WHITE;
+        ImGuiTextNode n4; n4.text = source; n4.color = CONSOLE_COLOR_CYAN;
+        imgui_line.push_back(n1);
+        imgui_line.push_back(n2);
+        imgui_line.push_back(n3);
+        imgui_line.push_back(n4);
+        state.imgui_log.push_back(imgui_line);
+
+        DEBUG_PRINT("TrapLink Received | Trap: %s from %s", trap_name.c_str(), source.c_str());
     }
 }
 
